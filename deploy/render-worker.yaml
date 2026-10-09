@@ -23,9 +23,13 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
-      # GROQ_API_KEY and HF_TOKEN are optional fallbacks and not listed (see
-      # render.yaml); add a key in the dashboard and append its provider here.
+      # Gemini, then Groq and Hugging Face behind it for when Gemini's free tier
+      # (20 requests per day per project per model) answers 429; see render.yaml.
+      # build_chain skips any provider in the order whose key is unset, so
+      # GROQ_API_KEY and HF_TOKEN stay out of this form: add either in the
+      # dashboard later and it joins the chain, no config edit. With no key at
+      # all the factory runs on the offline mock provider.
       - key: FATHER_PROVIDER_ORDER
-        value: gemini
+        value: gemini,groq,huggingface
       - key: FATHER_LOG_LEVEL
         value: INFO

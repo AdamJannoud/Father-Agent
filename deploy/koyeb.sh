@@ -12,6 +12,11 @@
 # https://<app>-<org>.koyeb.app/healthz every 10 minutes. Prices from
 # koyeb.com/docs/reference/instances, read 2026-10-09: eco-nano $1.61/mo,
 # nano $2.68/mo.
+#
+# The provider order falls through Gemini -> Groq -> Hugging Face: Gemini's free
+# tier allows 20 requests per day per project per model, and once it answers 429
+# the factory retries, then moves to the next keyed provider. Providers with no
+# key are skipped, so the GROQ_API_KEY and HF_TOKEN secrets are optional.
 set -euo pipefail
 
 REPO="${REPO:-github.com/AdamJannoud/Father-Agent}"
@@ -26,14 +31,15 @@ common=(
   --env "TELEGRAM_BOT_TOKEN={{secret.TELEGRAM_BOT_TOKEN}}"
   --env "TELEGRAM_ALLOWED_USERS={{secret.TELEGRAM_ALLOWED_USERS}}"
   --env "GEMINI_API_KEY={{secret.GEMINI_API_KEY}}"
+  --env "GROQ_API_KEY={{secret.GROQ_API_KEY}}"
   --env "HF_TOKEN={{secret.HF_TOKEN}}"
-  --env "FATHER_PROVIDER_ORDER=gemini"
+  --env "FATHER_PROVIDER_ORDER=gemini,groq,huggingface"
   --env "PORT=8000"
 )
 
 case "${1:-}" in
   secrets)
-    for name in TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USERS GEMINI_API_KEY HF_TOKEN; do
+    for name in TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USERS GEMINI_API_KEY GROQ_API_KEY HF_TOKEN; do
       read -r -s -p "$name (empty to skip): " value; echo
       [ -n "$value" ] && koyeb secrets create "$name" --value "$value"
     done
@@ -47,7 +53,7 @@ case "${1:-}" in
     koyeb app init "$APP" "${common[@]}" --type worker --instance-type eco-nano
     ;;
   *)
-    sed -n '2,14p' "$0"
+    sed -n '2,19p' "$0"
     exit 2
     ;;
 esac

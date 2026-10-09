@@ -34,12 +34,18 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
-      # Gemini holds the key, and the provider order pins it so the bot never
-      # guesses. GROQ_API_KEY and HF_TOKEN are deliberately not listed: they are
-      # optional fallbacks the form does not ask for, and with no key at all the
-      # factory runs on the offline mock provider. To use one as a fallback, add
-      # its key in the dashboard and append it here (e.g. gemini,groq).
+      # Gemini first, then Groq and Hugging Face as fallbacks. Gemini's free tier
+      # allows 20 requests per day per project per model: measured 2026-10-09,
+      # Google answered HTTP 429 RESOURCE_EXHAUSTED with quotaId
+      # GenerateRequestsPerDayPerProjectPerModel-FreeTier. A 429 is retried
+      # (honouring RetryInfo/Retry-After), then falls through to the next one.
+      # build_chain (father_agent/providers/chain.py) keeps only the providers
+      # Config.has_key() reports as keyed, so a fallback named here with no key
+      # is skipped silently. That is why GROQ_API_KEY and HF_TOKEN are
+      # deliberately not in this form: add either free key in the dashboard
+      # later and it joins the chain, no config edit. With no key at all the
+      # factory runs on the offline mock provider.
       - key: FATHER_PROVIDER_ORDER
-        value: gemini
+        value: gemini,groq,huggingface
       - key: FATHER_LOG_LEVEL
         value: INFO

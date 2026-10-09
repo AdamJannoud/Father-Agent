@@ -366,9 +366,11 @@ koyeb.com/docs/reference/instances, read 2026-10-09.
 2. Fill in the secrets it asks for: `TELEGRAM_BOT_TOKEN`,
    `TELEGRAM_ALLOWED_USERS`, and `GEMINI_API_KEY`. You type these into Render's
    own form and they are stored as secrets there. The Blueprint also sets
-   `FATHER_PROVIDER_ORDER=gemini`. `GROQ_API_KEY` and `HF_TOKEN` are optional
-   fallbacks and not listed: add one in the dashboard later, and append its
-   provider to `FATHER_PROVIDER_ORDER`, if you want a fallback.
+   `FATHER_PROVIDER_ORDER=gemini,groq,huggingface`. Gemini's free tier allows
+   20 requests per day per project per model, and once it answers `429` the
+   factory falls through to the next provider. A provider with no key is
+   skipped, so the form does not ask for `GROQ_API_KEY` or `HF_TOKEN`: adding
+   either free key in the dashboard later is the only step to get a fallback.
 3. Add the pinger. Create a free HTTP monitor on
    [UptimeRobot](https://uptimerobot.com) or a job on
    [cron-job.org](https://cron-job.org) that requests

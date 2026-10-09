@@ -5,7 +5,7 @@
     ".github/workflows/ci.yml": "a795c12f9697ba9b385443d5cfa61b28cb506701693132d3908d44d3772ed7fe",
     ".gitignore": "88674483a76250d5ecc50518f5f72ad1736964cca8bd64128276f6400694a2d6",
     "LICENSE": "fd194335742213711856c3411dfe0340a0dfff020849692738e09cb6e61d7068",
-    "README.md": "f38b5645e671d1fce7135376a394eff4dd3363d17be5bf448ff6197c3cb0f8bf",
+    "README.md": "6e2b7c9628dfd404685c6166f88864e3670c34a3fa6a7682d2c75efda33928c4",
     "father_agent/__init__.py": "7ffc54a10dee1b31c9c87945af7d4af7a74ebdb1ac0eee84184777a9e4cd257b",
     "father_agent/bot.py": "5fed4948a4662e1ff9b91e0dc82cb349da89078dba6e4ac597acc0f1f106fc62",
     "father_agent/cli.py": "1abb1c0320b84fb42207fc11c3d0df81319a1489ee2d9da9c48adf4c4910d160",

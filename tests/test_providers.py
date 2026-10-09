@@ -47,6 +47,13 @@ def test_success_sends_bearer_and_parses_reply() -> None:
     assert seen["body"]["messages"] == MESSAGES
 
 
+def test_reasoning_block_is_stripped() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=ok_body("<think>{not json}</think>\n{\"a\": 1}"))
+
+    assert asyncio.run(provider("groq", handler).complete(MESSAGES)).text == '{"a": 1}'
+
+
 def test_429_retries_then_switches_provider() -> None:
     calls = {"groq": 0, "huggingface": 0}
     events: list[str] = []

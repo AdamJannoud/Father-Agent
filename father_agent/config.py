@@ -32,7 +32,9 @@ LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 DEFAULT_GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 DEFAULT_HF_BASE_URL = "https://router.huggingface.co/v1"
-DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+#: Groq retired llama-3.3-70b-versatile on the free tier on 2026-08-16 and
+#: recommends qwen/qwen3.6-27b (or openai/gpt-oss-120b) in its place.
+DEFAULT_GROQ_MODEL = "qwen/qwen3.6-27b"
 DEFAULT_HF_MODEL = "Qwen/Qwen2.5-72B-Instruct"
 
 KNOWN_PROVIDERS = ("groq", "huggingface", "local", "mock")

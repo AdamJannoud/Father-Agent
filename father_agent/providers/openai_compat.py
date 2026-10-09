@@ -10,6 +10,7 @@ refused any host that is not free.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -21,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 #: Status codes worth retrying on the same provider.
 RETRYABLE = {408, 409, 425, 429, 500, 502, 503, 504}
+
+#: Reasoning models (Qwen 3, DeepSeek R1...) may prefix their answer with this.
+_THINK_RE = re.compile(r"<think>.*?</think>", re.S)
 
 
 def _retry_after(response: httpx.Response) -> float | None:
@@ -98,7 +102,9 @@ class OpenAICompatProvider(Provider):
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise ProviderError(f"{self.label} returned an unexpected payload",
                                 provider=self.name, retryable=True) from exc
-        if not isinstance(text, str) or not text.strip():
+        if isinstance(text, str):
+            text = _THINK_RE.sub("", text).strip()
+        if not isinstance(text, str) or not text:
             raise ProviderError(f"{self.label} returned an empty reply", provider=self.name,
                                 retryable=True)
         logger.debug("%s replied with %d chars", self.label, len(text))

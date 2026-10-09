@@ -113,3 +113,27 @@ def test_empty_command_is_rejected(config: Config, tmp_path: Path) -> None:
     from father_agent.errors import FatherAgentError
     with pytest.raises(FatherAgentError, match="empty"):
         run(Factory(config), "  ", output_dir=tmp_path / "out")
+
+
+def test_remote_http_path_end_to_end(config: Config, tmp_path: Path) -> None:
+    """The real OpenAI-compatible HTTP path, answered in-process (no network)."""
+    import httpx
+
+    from father_agent.providers import OpenAICompatProvider
+
+    brain = MockProvider()
+    requests: list[dict] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        reply = await brain.complete(body["messages"])
+        return httpx.Response(200, json={"choices": [{"message": {"content": reply.text}}]})
+
+    groq = OpenAICompatProvider("groq", config.groq_base_url, "qwen/qwen3.6-27b", "gsk_test",
+                                transport=httpx.MockTransport(handler))
+    result = run(Factory(config, ProviderChain([groq])), SAMPLE_COMMAND,
+                 output_dir=tmp_path / "out")
+    assert result.spec.planned_by == "groq/qwen/qwen3.6-27b"
+    assert len(requests) == 3 and all(r["model"] == "qwen/qwen3.6-27b" for r in requests)
+    assert "using `groq/qwen/qwen3.6-27b`" in (result.target_dir / "README.md").read_text()

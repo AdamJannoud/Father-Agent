@@ -15,6 +15,41 @@ def test_defaults_are_keyless_and_free(config: Config) -> None:
     assert not config.remote_ready
     assert config.groq_base_url == "https://api.groq.com/openai/v1"
     assert config.hf_base_url == "https://router.huggingface.co/v1"
+    assert config.gemini_base_url == "https://generativelanguage.googleapis.com/v1beta/openai/"
+    assert config.provider_order == ("groq", "huggingface", "gemini")
+    assert not config.has_key("gemini")
+
+
+def test_gemini_endpoint_is_on_the_free_list() -> None:
+    """Gemini's OpenAI-compatible route passes the free-only check."""
+    url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    assert check_free_endpoint(url) == url.rstrip("/")
+
+
+def test_gemini_key_from_gemini_or_google_env(monkeypatch: pytest.MonkeyPatch,
+                                              tmp_path: Path) -> None:
+    """GEMINI_API_KEY wins; GOOGLE_API_KEY is the fallback; both are redacted."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "AIza_google_fallback_1234")
+    config = Config.load(env_file=tmp_path / "x")
+    assert config.gemini_api_key == "AIza_google_fallback_1234"
+    assert config.has_key("gemini") and config.remote_ready
+    assert config.gemini_api_key in config.secrets
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza_gemini_primary_5678")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.5-flash")
+    config = Config.load(env_file=tmp_path / "x")
+    assert config.gemini_api_key == "AIza_gemini_primary_5678"
+    assert config.gemini_model == "gemini-3.5-flash"
+
+
+def test_gemini_placeholder_and_paid_override(monkeypatch: pytest.MonkeyPatch,
+                                              tmp_path: Path) -> None:
+    """A placeholder GEMINI_API_KEY falls back to GOOGLE_API_KEY; a foreign URL is refused."""
+    monkeypatch.setenv("GEMINI_API_KEY", "your-gemini-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "<google key>")
+    assert Config.load(env_file=tmp_path / "x").gemini_api_key == ""
+    monkeypatch.setenv("GEMINI_BASE_URL", "https://api.openai.com/v1")
+    with pytest.raises(ConfigError, match="only free"):
+        Config.load(env_file=tmp_path / "x")
 
 
 @pytest.mark.parametrize("url", ["https://api.openai.com/v1", "https://api.anthropic.com",

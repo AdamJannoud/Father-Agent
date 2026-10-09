@@ -25,6 +25,7 @@ FREE_HOSTS: dict[str, str] = {
     "api.groq.com": "Groq free tier",
     "router.huggingface.co": "Hugging Face Inference Providers (free credits)",
     "api-inference.huggingface.co": "Hugging Face Serverless Inference",
+    "generativelanguage.googleapis.com": "Google Gemini API free tier",
 }
 
 #: A local llama.cpp / OpenAI-compatible server is allowed only on loopback.
@@ -38,8 +39,14 @@ DEFAULT_HF_BASE_URL = "https://router.huggingface.co/v1"
 #: Model ID verified against console.groq.com/docs/models on 2026-10-09.
 DEFAULT_GROQ_MODEL = "qwen/qwen3.8-27b"
 DEFAULT_HF_MODEL = "Qwen/Qwen2.5-72B-Instruct"
+#: Gemini's OpenAI-compatible route (same /chat/completions protocol).
+DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+#: gemini-1.5-flash and gemini-1.5-pro are retired and no longer listed by Google;
+#: gemini-3.8-flash is the current stable model with a free tier. Model ID
+#: verified against ai.google.dev/gemini-api/docs/models and /pricing on 2026-10-09.
+DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 
-KNOWN_PROVIDERS = ("groq", "huggingface", "local", "mock")
+KNOWN_PROVIDERS = ("groq", "huggingface", "gemini", "local", "mock")
 
 
 def _is_placeholder(value: str) -> bool:
@@ -125,14 +132,17 @@ class Config:
 
     groq_api_key: str = ""
     hf_token: str = ""
+    gemini_api_key: str = ""
     telegram_bot_token: str = ""
     groq_model: str = DEFAULT_GROQ_MODEL
     hf_model: str = DEFAULT_HF_MODEL
+    gemini_model: str = DEFAULT_GEMINI_MODEL
     groq_base_url: str = DEFAULT_GROQ_BASE_URL
     hf_base_url: str = DEFAULT_HF_BASE_URL
+    gemini_base_url: str = DEFAULT_GEMINI_BASE_URL
     local_llm_url: str = ""
     local_llm_model: str = "local"
-    provider_order: tuple[str, ...] = ("groq", "huggingface")
+    provider_order: tuple[str, ...] = ("groq", "huggingface", "gemini")
     allow_mock_fallback: bool = False
     request_timeout: float = 90.0
     max_retries: int = 3
@@ -149,6 +159,7 @@ class Config:
         """Enforce the free-only rule and sane provider names."""
         check_free_endpoint(self.groq_base_url)
         check_free_endpoint(self.hf_base_url)
+        check_free_endpoint(self.gemini_base_url)
         if self.local_llm_url:
             check_free_endpoint(self.local_llm_url, allow_local=True)
         unknown = [p for p in self.provider_order if p not in KNOWN_PROVIDERS]
@@ -182,20 +193,24 @@ class Config:
                 logger.warning("Could not read %s: %s", path, exc)
         order = tuple(
             p.strip().lower()
-            for p in os.environ.get("FATHER_PROVIDER_ORDER", "groq,huggingface").split(",")
+            for p in os.environ.get("FATHER_PROVIDER_ORDER", "groq,huggingface,gemini").split(",")
             if p.strip()
         )
         values: dict[str, object] = {
             "groq_api_key": _secret("GROQ_API_KEY"),
             "hf_token": _secret("HF_TOKEN"),
+            "gemini_api_key": _secret("GEMINI_API_KEY") or _secret("GOOGLE_API_KEY"),
             "telegram_bot_token": _secret("TELEGRAM_BOT_TOKEN"),
             "groq_model": os.environ.get("GROQ_MODEL", "").strip() or DEFAULT_GROQ_MODEL,
             "hf_model": os.environ.get("HF_MODEL", "").strip() or DEFAULT_HF_MODEL,
+            "gemini_model": os.environ.get("GEMINI_MODEL", "").strip() or DEFAULT_GEMINI_MODEL,
             "groq_base_url": os.environ.get("GROQ_BASE_URL", "").strip() or DEFAULT_GROQ_BASE_URL,
             "hf_base_url": os.environ.get("HF_BASE_URL", "").strip() or DEFAULT_HF_BASE_URL,
+            "gemini_base_url": (os.environ.get("GEMINI_BASE_URL", "").strip()
+                                or DEFAULT_GEMINI_BASE_URL),
             "local_llm_url": os.environ.get("FATHER_LOCAL_LLM_URL", "").strip(),
             "local_llm_model": os.environ.get("FATHER_LOCAL_LLM_MODEL", "").strip() or "local",
-            "provider_order": order or ("groq", "huggingface"),
+            "provider_order": order or ("groq", "huggingface", "gemini"),
             "allow_mock_fallback": _bool("FATHER_ALLOW_MOCK_FALLBACK", False),
             "request_timeout": _float("FATHER_REQUEST_TIMEOUT", 90.0),
             "max_retries": _int("FATHER_MAX_RETRIES", 3, minimum=1),
@@ -214,7 +229,8 @@ class Config:
     @property
     def secrets(self) -> list[str]:
         """Return every configured secret, for log redaction."""
-        return [s for s in (self.groq_api_key, self.hf_token, self.telegram_bot_token) if s]
+        return [s for s in (self.groq_api_key, self.hf_token, self.gemini_api_key,
+                            self.telegram_bot_token) if s]
 
     def has_key(self, provider: str) -> bool:
         """Return True when ``provider`` has what it needs to make a call."""
@@ -222,6 +238,8 @@ class Config:
             return bool(self.groq_api_key)
         if provider == "huggingface":
             return bool(self.hf_token)
+        if provider == "gemini":
+            return bool(self.gemini_api_key)
         if provider == "local":
             return bool(self.local_llm_url)
         return provider == "mock"

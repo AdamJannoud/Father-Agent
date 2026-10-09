@@ -401,6 +401,7 @@ def _chain_rows(config: Config) -> list[tuple[str, str, str, str]]:
     return [
         ("groq", mask(config.groq_api_key), config.groq_model, config.groq_base_url),
         ("huggingface", mask(config.hf_token), config.hf_model, config.hf_base_url),
+        ("gemini", mask(config.gemini_api_key), config.gemini_model, config.gemini_base_url),
         ("local", "on" if config.local_llm_url else "off (opt-in)", config.local_llm_model,
          config.local_llm_url or "set FATHER_LOCAL_LLM_URL"),
         ("mock", "always available", "offline-templates", "in-process, no network"),
@@ -500,8 +501,8 @@ async def _cmd_doctor(args: argparse.Namespace, config: Config | None,
         out(f"result: {len(failures)} problem(s): {', '.join(failures)}")
         return 1
     if chain.is_mock_only:
-        out("result: ready in offline mock mode. Add GROQ_API_KEY or HF_TOKEN to .env "
-            "(see .env.example) for real models.")
+        out("result: ready in offline mock mode. Add GROQ_API_KEY, HF_TOKEN or GEMINI_API_KEY "
+            "to .env (see .env.example) for real models.")
     else:
         out("result: ready.")
     return 0

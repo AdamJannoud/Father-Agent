@@ -72,7 +72,7 @@ fi
 
 # No keys and no .env: everything below must work offline.
 export FATHER_ENV_FILE="$ROOT/.verify-no-env"
-unset GROQ_API_KEY HF_TOKEN FATHER_LOCAL_LLM_URL || true
+unset GROQ_API_KEY HF_TOKEN GEMINI_API_KEY GOOGLE_API_KEY FATHER_LOCAL_LLM_URL || true
 
 if "$VPY" -m ruff --version >/dev/null 2>&1; then
   say "ruff check (project)"

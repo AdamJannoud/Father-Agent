@@ -163,6 +163,12 @@ def build_provider(name: str, config: Config, **kwargs: object) -> Provider:
         return OpenAICompatProvider("huggingface", config.hf_base_url, config.hf_model,
                                     config.hf_token, timeout=config.request_timeout,
                                     **kwargs)  # type: ignore[arg-type]
+    if name == "gemini":
+        if not config.gemini_api_key:
+            raise ConfigError("GEMINI_API_KEY (or GOOGLE_API_KEY) is not set (see .env.example)")
+        return OpenAICompatProvider("gemini", config.gemini_base_url, config.gemini_model,
+                                    config.gemini_api_key, timeout=config.request_timeout,
+                                    **kwargs)  # type: ignore[arg-type]
     if name == "local":
         if not config.local_llm_url:
             raise ConfigError("FATHER_LOCAL_LLM_URL is not set (local models are off by default)")
@@ -187,7 +193,7 @@ def build_chain(config: Config, choice: str = "auto", *,
                      if n != "mock" and config.has_key(n)]
         if not providers:
             (logger.warning if warn else logger.debug)(
-                "no GROQ_API_KEY or HF_TOKEN set: using the offline mock provider "
+                "no GROQ_API_KEY, HF_TOKEN or GEMINI_API_KEY set: using the offline mock provider "
                 "(deterministic templates). Add a free key to .env for real models.")
             providers = [MockProvider()]
         elif config.allow_mock_fallback or "mock" in config.provider_order:

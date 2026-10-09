@@ -157,10 +157,11 @@ anything else at start-up, so a paid API cannot be reached by accident:
 | --- | --- | --- |
 | Groq free tier | <https://console.groq.com/keys> → `GROQ_API_KEY` | `qwen/qwen3.8-27b` |
 | Hugging Face Serverless Inference | <https://huggingface.co/settings/tokens> → `HF_TOKEN` | `Qwen/Qwen2.5-72B-Instruct` |
+| Google Gemini API free tier | <https://aistudio.google.com/apikey> → `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | `gemini-3.8-flash` |
 
 ```bash
 cp .env.example .env
-# edit .env and paste your key(s) after GROQ_API_KEY= and/or HF_TOKEN=
+# edit .env and paste your key(s) after GROQ_API_KEY=, HF_TOKEN= and/or GEMINI_API_KEY=
 python main.py doctor --online      # checks each key with GET /models (no tokens spent)
 ```
 
@@ -363,10 +364,11 @@ koyeb.com/docs/reference/instances, read 2026-10-09.
    service that installs `requirements.txt` then `requirements-bot.txt`, starts `python main.py bot` and
    health-checks `/healthz`. `.python-version` pins Python 3.12.
 2. Fill in the secrets it asks for: `TELEGRAM_BOT_TOKEN`,
-   `TELEGRAM_ALLOWED_USERS`, and `GROQ_API_KEY`. You type these into Render's own
-   form and they are stored as secrets there. `HF_TOKEN` is optional and not
-   listed: add it in the dashboard later if you want Hugging Face as the
-   fallback provider.
+   `TELEGRAM_ALLOWED_USERS`, and `GEMINI_API_KEY`. You type these into Render's
+   own form and they are stored as secrets there. The Blueprint also sets
+   `FATHER_PROVIDER_ORDER=gemini`. `GROQ_API_KEY` and `HF_TOKEN` are optional
+   fallbacks and not listed: add one in the dashboard later, and append its
+   provider to `FATHER_PROVIDER_ORDER`, if you want a fallback.
 3. Add the pinger. Create a free HTTP monitor on
    [UptimeRobot](https://uptimerobot.com) or a job on
    [cron-job.org](https://cron-job.org) that requests

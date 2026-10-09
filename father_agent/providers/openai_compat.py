@@ -122,6 +122,8 @@ class OpenAICompatProvider(Provider):
                 ids = {m.get("id") for m in response.json().get("data", [])}
             except (ValueError, AttributeError):
                 return "reachable"
+            # Gemini lists ids as "models/<name>" but takes the bare name in requests.
+            ids = {i.removeprefix("models/") if isinstance(i, str) else i for i in ids}
             if ids and self.model not in ids:
                 return f"key ok, but model {self.model!r} is not listed"
             return "key ok"

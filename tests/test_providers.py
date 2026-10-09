@@ -14,6 +14,7 @@ import pytest
 from father_agent.config import Config
 from father_agent.errors import AllProvidersFailedError, ConfigError
 from father_agent.providers import MockProvider, OpenAICompatProvider, ProviderChain, build_chain
+from father_agent.providers.chain import build_provider
 
 MESSAGES = [{"role": "user", "content": "hi"}]
 
@@ -136,6 +137,15 @@ def test_check_reports_key_and_model_status() -> None:
     assert "not listed" in asyncio.run(provider("groq", models, model="gone").check())
 
 
+def test_check_accepts_gemini_models_prefix() -> None:
+    def models(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "models/gemini-3.8-flash"}]})
+
+    gemini = provider("gemini", models, model="gemini-3.8-flash")
+    assert asyncio.run(gemini.check()) == "key ok"
+    assert "not listed" in asyncio.run(provider("gemini", models, model="gone").check())
+
+
 def test_build_chain_without_keys_is_mock_only(config: Config) -> None:
     chain = build_chain(config)
     assert chain.is_mock_only and chain.primary.label == "mock/offline-templates"
@@ -149,6 +159,35 @@ def test_build_chain_with_keys_orders_free_providers(config: Config) -> None:
     asyncio.run(chain.aclose())
 
 
+def test_build_chain_includes_gemini_when_keyed(config: Config) -> None:
+    keyed = Config(**{**config.__dict__, "groq_api_key": "gsk_x", "gemini_api_key": "AIza_z"})
+    chain = build_chain(keyed)
+    assert [p.name for p in chain.providers] == ["groq", "gemini"]
+    gemini = chain.providers[1]
+    assert isinstance(gemini, OpenAICompatProvider)
+    assert gemini.label == "gemini/gemini-3.8-flash"
+    asyncio.run(chain.aclose())
+
+
+def test_gemini_posts_to_openai_compat_route(config: Config) -> None:
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers["authorization"]
+        return httpx.Response(200, json=ok_body("from gemini"))
+
+    keyed = Config(**{**config.__dict__, "gemini_api_key": "AIza_z"})
+    gemini = build_provider("gemini", keyed, transport=httpx.MockTransport(handler))
+    result = asyncio.run(gemini.complete(MESSAGES))
+    assert result.text == "from gemini" and result.provider == "gemini"
+    assert seen["url"] == ("https://generativelanguage.googleapis.com/v1beta/openai"
+                           "/chat/completions")
+    assert seen["auth"] == "Bearer AIza_z"
+
+
 def test_forcing_an_unkeyed_provider_is_a_config_error(config: Config) -> None:
     with pytest.raises(ConfigError, match="GROQ_API_KEY"):
         build_chain(config, "groq")
+    with pytest.raises(ConfigError, match="GEMINI_API_KEY"):
+        build_chain(config, "gemini")

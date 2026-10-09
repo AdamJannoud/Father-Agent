@@ -25,14 +25,15 @@ common=(
   --regions "$REGION"
   --env "TELEGRAM_BOT_TOKEN={{secret.TELEGRAM_BOT_TOKEN}}"
   --env "TELEGRAM_ALLOWED_USERS={{secret.TELEGRAM_ALLOWED_USERS}}"
-  --env "GROQ_API_KEY={{secret.GROQ_API_KEY}}"
+  --env "GEMINI_API_KEY={{secret.GEMINI_API_KEY}}"
   --env "HF_TOKEN={{secret.HF_TOKEN}}"
+  --env "FATHER_PROVIDER_ORDER=gemini"
   --env "PORT=8000"
 )
 
 case "${1:-}" in
   secrets)
-    for name in TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USERS GROQ_API_KEY HF_TOKEN; do
+    for name in TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USERS GEMINI_API_KEY HF_TOKEN; do
       read -r -s -p "$name (empty to skip): " value; echo
       [ -n "$value" ] && koyeb secrets create "$name" --value "$value"
     done

@@ -32,10 +32,14 @@ services:
         sync: false
       - key: TELEGRAM_ALLOWED_USERS
         sync: false
-      - key: GROQ_API_KEY
+      - key: GEMINI_API_KEY
         sync: false
-      # HF_TOKEN is deliberately not listed: it is optional. Groq alone is enough,
-      # and with no key at all the factory runs on the offline mock provider. Add
-      # it in the dashboard later for Hugging Face as the fallback provider.
+      # Gemini holds the key, and the provider order pins it so the bot never
+      # guesses. GROQ_API_KEY and HF_TOKEN are deliberately not listed: they are
+      # optional fallbacks the form does not ask for, and with no key at all the
+      # factory runs on the offline mock provider. To use one as a fallback, add
+      # its key in the dashboard and append it here (e.g. gemini,groq).
+      - key: FATHER_PROVIDER_ORDER
+        value: gemini
       - key: FATHER_LOG_LEVEL
         value: INFO

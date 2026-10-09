@@ -6,7 +6,7 @@ You own every line, it runs on a laptop, and inference costs nothing.
 
 ```text
 $ python main.py new "a Solana wallet watcher that logs balance changes every 60s and plots them"
-father spec     1/5  planning · provider groq/qwen/qwen3.6-27b
+father spec     1/5  planning · provider groq/qwen/qwen3.8-27b
 father spec     2/5  wallet_watcher · blockchain · httpx + pandas + matplotlib
 father code     3/5  wrote agent.py: 5 classes, 10 methods, docstrings · 288 lines
 father code     3/5  wrote test_agent.py · 83 lines
@@ -101,7 +101,7 @@ anything else at start-up, so a paid API cannot be reached by accident:
 
 | Provider | Free key | Default model |
 | --- | --- | --- |
-| Groq free tier | <https://console.groq.com/keys> → `GROQ_API_KEY` | `qwen/qwen3.6-27b` |
+| Groq free tier | <https://console.groq.com/keys> → `GROQ_API_KEY` | `qwen/qwen3.8-27b` |
 | Hugging Face Serverless Inference | <https://huggingface.co/settings/tokens> → `HF_TOKEN` | `Qwen/Qwen2.5-72B-Instruct` |
 
 ```bash
@@ -126,8 +126,8 @@ when retries run out, or a key is rejected or a model is retired, the chain
 switches to the next provider instead of ending the run:
 
 ```text
-father spec     1/5  groq/qwen/qwen3.6-27b → 429, waiting 3s (attempt 2 of 3)
-father spec     1/5  groq/qwen/qwen3.6-27b → 429: ...; switching to huggingface/Qwen/Qwen2.5-72B-Instruct
+father spec     1/5  groq/qwen/qwen3.8-27b → 429, waiting 3s (attempt 2 of 3)
+father spec     1/5  groq/qwen/qwen3.8-27b → 429: ...; switching to huggingface/Qwen/Qwen2.5-72B-Instruct
 ```
 
 Every provider call runs under an asyncio timeout (`FATHER_REQUEST_TIMEOUT`) and

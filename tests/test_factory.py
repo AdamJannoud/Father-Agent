@@ -130,10 +130,10 @@ def test_remote_http_path_end_to_end(config: Config, tmp_path: Path) -> None:
         reply = await brain.complete(body["messages"])
         return httpx.Response(200, json={"choices": [{"message": {"content": reply.text}}]})
 
-    groq = OpenAICompatProvider("groq", config.groq_base_url, "qwen/qwen3.6-27b", "gsk_test",
+    groq = OpenAICompatProvider("groq", config.groq_base_url, "qwen/qwen3.8-27b", "gsk_test",
                                 transport=httpx.MockTransport(handler))
     result = run(Factory(config, ProviderChain([groq])), SAMPLE_COMMAND,
                  output_dir=tmp_path / "out")
-    assert result.spec.planned_by == "groq/qwen/qwen3.6-27b"
-    assert len(requests) == 3 and all(r["model"] == "qwen/qwen3.6-27b" for r in requests)
-    assert "using `groq/qwen/qwen3.6-27b`" in (result.target_dir / "README.md").read_text()
+    assert result.spec.planned_by == "groq/qwen/qwen3.8-27b"
+    assert len(requests) == 3 and all(r["model"] == "qwen/qwen3.8-27b" for r in requests)
+    assert "using `groq/qwen/qwen3.8-27b`" in (result.target_dir / "README.md").read_text()

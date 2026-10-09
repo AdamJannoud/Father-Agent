@@ -1,0 +1,3 @@
+# Test/dev dependencies. The suite runs offline against the mock provider.
+-r requirements.txt
+pytest==9.1.1

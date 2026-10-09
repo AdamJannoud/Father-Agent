@@ -144,7 +144,7 @@ def _cmd_list(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
-async def _cmd_show(args: argparse.Namespace, config: Config) -> int:
+def _cmd_show(args: argparse.Namespace, config: Config) -> int:
     """Print a sub-agent's spec and re-run the (static) validator on its files."""
     candidate = Path(args.slug)
     folder = candidate if candidate.is_dir() else (args.out or config.output_dir) / args.slug
@@ -171,7 +171,7 @@ async def _cmd_show(args: argparse.Namespace, config: Config) -> int:
         out(f"  {name:<13}{size}")
         if present and name.endswith(".py"):
             sources[name] = path.read_text(encoding="utf-8")
-    reports = await Validator().validate_bundle(sources, spec) if sources else []
+    reports = asyncio.run(Validator().validate_bundle(sources, spec)) if sources else []
     for report in reports:
         out(f"  check {report.filename:<15}{report.summary}")
         for problem in report.problems:
@@ -320,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "list":
             return _cmd_list(args, config)
         if args.command == "show":
-            return asyncio.run(_cmd_show(args, config))
+            return _cmd_show(args, config)
         if args.command == "providers":
             return asyncio.run(_cmd_providers(args, config))
         if args.command == "doctor":

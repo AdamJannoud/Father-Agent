@@ -50,5 +50,5 @@ class Provider(ABC):
         """Cheap reachability check used by ``doctor --online``; returns a status line."""
         return "not checked"
 
-    async def aclose(self) -> None:
+    async def aclose(self) -> None:  # noqa: B027 - optional hook, not abstract
         """Release network resources. The default has none."""

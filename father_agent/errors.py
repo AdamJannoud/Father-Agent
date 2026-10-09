@@ -39,7 +39,8 @@ class SpecError(FatherAgentError):
 class ValidationFailedError(FatherAgentError):
     """Raised when a generated file fails the validator gate and cannot be repaired."""
 
-    def __init__(self, message: str, *, filename: str = "", problems: list[str] | None = None) -> None:
+    def __init__(self, message: str, *, filename: str = "",
+                 problems: list[str] | None = None) -> None:
         """Record which file failed and the list of problems the gate found."""
         super().__init__(message)
         self.filename = filename

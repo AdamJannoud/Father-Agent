@@ -186,8 +186,9 @@ def build_chain(config: Config, choice: str = "auto", *,
         providers = [build_provider(n, config) for n in config.provider_order
                      if n != "mock" and config.has_key(n)]
         if not providers:
-            (logger.warning if warn else logger.debug)("no GROQ_API_KEY or HF_TOKEN set: using the offline mock provider "
-                           "(deterministic templates). Add a free key to .env for real models.")
+            (logger.warning if warn else logger.debug)(
+                "no GROQ_API_KEY or HF_TOKEN set: using the offline mock provider "
+                "(deterministic templates). Add a free key to .env for real models.")
             providers = [MockProvider()]
         elif config.allow_mock_fallback or "mock" in config.provider_order:
             providers.append(MockProvider())

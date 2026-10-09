@@ -1,0 +1,20 @@
+[project]
+name = "father-agent"
+version = "1.0.0"
+description = "An open-source agent factory: one line of English in, a validated async Python sub-agent out. Free inference only."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["subagents", "sample_output"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "UP", "ASYNC"]
+ignore = ["E402"]

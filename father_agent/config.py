@@ -158,9 +158,12 @@ class Config:
         """Build a Config from ``.env`` plus the environment.
 
         Real environment variables win over ``.env`` values. Keyword overrides
-        win over both and are mainly for tests and CLI flags.
+        win over both and are mainly for tests and CLI flags. ``FATHER_ENV_FILE``
+        points at a different .env file when ``env_file`` is not given.
         """
-        path = Path(env_file) if env_file else PROJECT_ROOT / ".env"
+        if env_file is None and os.environ.get("FATHER_ENV_FILE", "").strip():
+            env_file = os.environ["FATHER_ENV_FILE"].strip()
+        path = Path(env_file).expanduser() if env_file else PROJECT_ROOT / ".env"
         loaded: Path | None = None
         if path.is_file():
             try:

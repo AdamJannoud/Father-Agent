@@ -362,6 +362,11 @@ PAGE_JS = """
 """
 
 
+def when(record: dict[str, Any]) -> str:
+    """``2026-10-09 11:28:14`` from a record's ISO timestamp."""
+    return str(record.get("timestamp", ""))[:19].replace("T", " ")
+
+
 def sparkline(values: list[float], width: int = 600, height: int = 120) -> str:
     """An inline SVG polyline of ``values`` (empty with fewer than two points)."""
     if len(values) < 2:
@@ -386,7 +391,7 @@ def render_page(records: list[dict[str, Any]]) -> str:
         trend = "" if change is None else (
             f'<span class="{"up" if change >= 0 else "down"}">{change:+.1f}% since the first '
             f"reading</span>")
-        rows = "".join(f'<tr><td>{esc(str(r.get("timestamp", "")))}</td>'
+        rows = "".join(f'<tr><td>{esc(when(r))}</td>'
                        f'<td class="num">{float(r["value"]):,.4f}</td></tr>'
                        for r in reversed(records[-20:]))
         body = (f'<section class="finding"><b>{latest:,.4f}</b><span>{esc(VALUE_LABEL)} now'
@@ -397,7 +402,7 @@ def render_page(records: list[dict[str, Any]]) -> str:
                 f"<h2>{esc(VALUE_LABEL)} over time</h2>{sparkline(values)}"
                 f'<h2>Recent readings</h2><table><tr><th>time (UTC)</th>'
                 f'<th class="num">{esc(VALUE_LABEL)}</th></tr>{rows}</table>')
-        updated = esc(str(records[-1].get("timestamp", "")))
+        updated = esc(when(records[-1])) + " UTC"
     else:
         body = ('<p class="empty">No readings yet. Set the variables in <code>.env</code> and '
                 "press <b>Fetch now</b>.</p>")

@@ -6,7 +6,9 @@
 #   bash scripts/verify.sh
 #
 # Steps: venv + deps → ruff on the project → pytest → main.py --help →
-# main.py doctor → one end-to-end generation into sample_output/.
+# main.py doctor → end-to-end generations into sample_output/: the cli sample,
+# then one per delivery interface (telegram, web/streamlit, web/fastapi, api),
+# each re-validated from disk, plus a deploy dry run.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -75,5 +77,36 @@ done
 "$VPY" main.py show wallet_watcher --out "$SAMPLE_DIR" >/dev/null \
   || fail "re-validating the written files failed"
 echo "ok: $SAMPLE_DIR/wallet_watcher/ written and re-validated"
+
+# One generation per delivery interface, still offline and key-free: the mock
+# provider renders app.py / bot.py and the factory writes the deploy kit.
+# Format: slug|files that must exist|extra flags|command
+INTERFACES=(
+  "solana_bot|bot.py scripts/setup_bot.py deploy/render/render.yaml||a Telegram bot that watches a Solana wallet and DMs me on changes"
+  "solana_dashboard|app.py deploy/huggingface/README.md deploy/render/render.yaml||a dashboard that tracks Solana priority fees and plots the last hour"
+  "bitcoin_price_tracker|app.py deploy/huggingface/Dockerfile|--interface web --framework fastapi|track the bitcoin price API every 5 minutes"
+  "bitcoin_service|app.py deploy/render/app.py||a service that exposes the bitcoin price over an HTTP API"
+)
+for row in "${INTERFACES[@]}"; do
+  IFS='|' read -r slug files flags command <<< "$row"
+  say "end-to-end (delivery): $slug ← \"$command\" $flags"
+  # shellcheck disable=SC2086
+  "$VPY" main.py new --provider mock --force --quiet --out "$SAMPLE_DIR" $flags "$command" \
+    || fail "generation of $slug failed"
+  for f in agent.py test_agent.py README.md spec.json requirements.txt .env.example \
+           bootstrap.py Dockerfile .dockerignore $files; do
+    [ -s "$SAMPLE_DIR/$slug/$f" ] || fail "missing $SAMPLE_DIR/$slug/$f"
+  done
+  "$VPY" main.py show "$slug" --out "$SAMPLE_DIR" >/dev/null \
+    || fail "re-validating $slug from disk failed"
+  echo "ok: $SAMPLE_DIR/$slug/ written and re-validated (bundle · deploy · secrets)"
+done
+
+say "python main.py deploy (prepare only: prints commands, pushes nothing)"
+"$VPY" main.py deploy solana_bot --out "$SAMPLE_DIR" --target render >/dev/null \
+  || fail "deploy --target render failed"
+"$VPY" main.py deploy solana_dashboard --out "$SAMPLE_DIR" --target docker --no-build \
+  >/dev/null || fail "deploy --target docker failed"
+echo "ok"
 
 say "all checks passed"

@@ -13,6 +13,10 @@ in place.
 
 The allowlist fails closed: with ``TELEGRAM_ALLOWED_USERS`` empty every message
 is refused, and the refusal names the sender's id so adding it is a copy-paste.
+An optional shared ``BOT_ACCESS_PASSWORD`` is the second door: ``/auth`` or
+``/login`` with it admits a sender for the life of this process (never on disk),
+the message carrying it is deleted before it is checked, and five wrong tries in
+an hour pause the command for that id. The allowlist never needs it.
 Generated code is never executed here either; the bundle is zipped from the
 files the factory wrote after the gate passed.
 
@@ -25,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import html
 import io
 import logging
@@ -34,6 +39,7 @@ import sys
 import time
 import zipfile
 from collections import deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -92,6 +98,10 @@ MAX_QUEUE = 5
 MAX_COMMAND = 1000
 #: /healthz turns 503 when no getUpdates has succeeded for this long.
 STALE_AFTER = 120.0
+#: Wrong /auth passwords per id before the command pauses for that id.
+AUTH_TRIES = 5
+#: How long those tries are counted for, and how long the pause lasts.
+AUTH_WINDOW = 3600.0
 EXAMPLE = "a Solana wallet watcher that logs balance changes every 60s and plots them"
 
 START_TEXT = (
@@ -107,10 +117,11 @@ HELP_TEXT = (
     "/again build your last line again\n"
     "/retry rebuild from the spec that survived a failed run\n"
     "/status what is running and what is queued\n"
-    "/whoami your Telegram id and whether it is allowed\n"
+    "/whoami your Telegram id and how you got in\n"
     "Nothing generated is ever executed."
 )
 _WHO_AM_I = re.compile(r"^\s*who\s*am\s*i\s*\??\s*$", re.IGNORECASE)
+_AUTH = re.compile(r"^/(?:auth|login)(?:@\w+)?(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
 
 
 # --------------------------------------------------------------------------- #
@@ -137,6 +148,8 @@ class BotSettings:
     port: int = 8080
     webhook_url: str = ""
     webhook_secret: str = ""
+    access_password: str = field(default="", repr=False)
+    auth_notify: bool = True
 
     @property
     def mode(self) -> str:
@@ -164,14 +177,24 @@ class BotSettings:
         return cls(token=token,
                    allowed=parse_allowed(os.environ.get("TELEGRAM_ALLOWED_USERS", "")),
                    port=int(raw_port), webhook_url=webhook,
-                   webhook_secret=os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip())
+                   webhook_secret=os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip(),
+                   access_password=config.bot_access_password,
+                   auth_notify=os.environ.get("BOT_AUTH_NOTIFY", "").strip().lower()
+                   not in {"0", "false", "no", "off"})
 
     def describe(self) -> list[str]:
-        """Display lines for ``bot --check``; the token is masked."""
+        """Display lines for ``bot --check``; the token is masked, the password never shown."""
         allowed = (", ".join(str(i) for i in sorted(self.allowed)) if self.allowed
                    else "EMPTY: every message is refused with the sender's id")
+        if self.access_password:
+            notify = "operators get a DM" if self.auth_notify else "BOT_AUTH_NOTIFY=0, no DM"
+            password = (f"set: /auth admits a guest until restart · {AUTH_TRIES} wrong "
+                        f"an hour pauses it · {notify}")
+        else:
+            password = "off: the allowlist is the only way in"
         return [f"token       {mask(self.token)}",
                 f"allowed     {allowed}",
+                f"password    {password}",
                 f"mode        {self.mode}" + (f" → {self.webhook_url}" if self.webhook_url
                                               else " (outbound long poll)"),
                 f"health      GET /healthz on port {self.port}"]
@@ -239,32 +262,156 @@ class PollWatch(BaseRequestMiddleware):
         return response
 
 
-class AllowList(BaseMiddleware):
-    """Refuse every message whose sender is not on the list (an empty list refuses all)."""
+@dataclass
+class Guest:
+    """An id that got in with the password, for this process only."""
 
-    def __init__(self, allowed: frozenset[int]) -> None:
-        """Remember the allowed Telegram user ids."""
+    since: datetime
+    name: str = ""
+
+
+class Access:
+    """Who may use the bot: the permanent allowlist, plus guests admitted by password.
+
+    Guests live in memory, so a restart clears them. Wrong passwords are counted
+    per id; the :data:`AUTH_TRIES`-th wrong one inside :data:`AUTH_WINDOW` pauses
+    ``/auth`` for that id for another window. The password is only ever compared
+    (in constant time), never stored anywhere but here, logged or echoed.
+    """
+
+    def __init__(self, allowed: frozenset[int], password: str = "", *,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        """Remember the allowlist and the shared password ("" turns /auth off)."""
         self.allowed = allowed
+        self._password = password.encode("utf-8")
+        self.clock = clock
+        self.guests: dict[int, Guest] = {}
+        self.seen: set[int] = set()
+        self._wrong: dict[int, list[float]] = {}
+        self._paused_until: dict[int, float] = {}
+
+    @property
+    def enabled(self) -> bool:
+        """Whether a password is set at all; an unset one is a closed door."""
+        return bool(self._password)
+
+    def permits(self, user_id: int | None) -> bool:
+        """Allowlisted, or admitted by password in this process."""
+        return user_id is not None and (user_id in self.allowed or user_id in self.guests)
+
+    def paused_for(self, user_id: int) -> float:
+        """Seconds left on this id's pause (0 when it may try)."""
+        until = self._paused_until.get(user_id)
+        if until is None:
+            return 0.0
+        left = until - self.clock()
+        if left > 0:
+            return left
+        del self._paused_until[user_id]
+        return 0.0
+
+    def tries_left(self, user_id: int) -> int:
+        """Wrong passwords this id may still send before the pause."""
+        now = self.clock()
+        recent = [t for t in self._wrong.get(user_id, []) if now - t < AUTH_WINDOW]
+        self._wrong[user_id] = recent
+        return AUTH_TRIES - len(recent)
+
+    def check(self, user_id: int, attempt: str, name: str = "") -> str:
+        """``"ok"``, ``"wrong"``, ``"paused"`` or ``"off"``; ``"ok"`` admits the id."""
+        if not self.enabled:
+            return "off"
+        if self.paused_for(user_id):
+            return "paused"
+        if hmac.compare_digest(attempt.encode("utf-8"), self._password):
+            self._wrong.pop(user_id, None)
+            if user_id not in self.allowed:
+                self.guests[user_id] = Guest(since=datetime.now(UTC), name=name)
+            return "ok"
+        self.tries_left(user_id)  # drop tries older than the window
+        self._wrong.setdefault(user_id, []).append(self.clock())
+        if len(self._wrong[user_id]) >= AUTH_TRIES:
+            del self._wrong[user_id]
+            self._paused_until[user_id] = self.clock() + AUTH_WINDOW
+        return "wrong"
+
+
+def auth_argument(text: str | None) -> str | None:
+    """The password after ``/auth`` or ``/login`` (``""`` when missing), else None.
+
+    Everything after the command is the password, inner spaces and all; only the
+    whitespace around it is dropped. ``/auth@SomeBot`` (a group mention) counts.
+    """
+    match = _AUTH.match(text or "")
+    return None if match is None else (match.group(1) or "").strip()
+
+
+class AllowList(BaseMiddleware):
+    """Refuse every message whose sender is not let in (an empty list refuses all).
+
+    The one exception is ``/auth`` or ``/login`` from an id that is not in yet:
+    that goes to ``authenticate`` instead of the refusal.
+    """
+
+    def __init__(self, access: Access,
+                 authenticate: Callable[[Message, str], Awaitable[None]] | None = None) -> None:
+        """Check senders against ``access``; hand password attempts to ``authenticate``."""
+        self.access = access
+        self.authenticate = authenticate
 
     async def __call__(self, handler, event: TelegramObject, data: dict[str, Any]) -> Any:
-        """Hand the message on, or answer with the caller's id and stop."""
+        """Hand the message on, take a password attempt, or answer with the caller's id."""
         user = getattr(event, "from_user", None)
-        if user is not None and user.id in self.allowed:
+        if user is not None and self.access.permits(user.id):
+            self.access.seen.add(user.id)
             return await handler(event, data)
         if isinstance(event, Message):
+            attempt = auth_argument(event.text) if user is not None else None
+            if attempt is not None and self.authenticate is not None:
+                await self.authenticate(event, attempt)
+                self.access.seen.add(user.id)
+                return None
             logger.warning("refused a message from Telegram id %s (not in "
                            "TELEGRAM_ALLOWED_USERS)", user.id if user else "?")
-            await event.answer(refusal_text(user.id if user else None))
+            if user is not None:
+                self.access.seen.add(user.id)
+            await event.answer(refusal_text(user.id if user else None,
+                                            password=self.access.enabled))
         return None
 
 
-def refusal_text(user_id: int | None) -> str:
-    """The "Not allowed." message, naming the id to add."""
+def refusal_text(user_id: int | None, *, password: bool = False) -> str:
+    """The "Not allowed." message, naming the id, and offering /auth when it is on."""
+    how = ("send /auth &lt;password&gt; to get in, or ask the operator to add your id"
+           if password else
+           "ask the operator to add it to TELEGRAM_ALLOWED_USERS, then send the line again")
     return ("Not allowed.\n"
             f"<pre>your Telegram id: {user_id if user_id is not None else 'unknown'}\n"
-            "ask the operator to add it to TELEGRAM_ALLOWED_USERS, then send the line "
-            "again</pre>\n"
+            f"{how}</pre>\n"
             "Nothing was planned, nothing was spent.")
+
+
+def _minutes(seconds: float) -> str:
+    """``59 minutes`` / ``1 minute``, rounded up."""
+    n = max(1, int(-(-seconds // 60)))
+    return f"{n} minute{'' if n == 1 else 's'}"
+
+
+def _who(user: Any) -> str:
+    """``Sara, @sara_k`` for the operator DM."""
+    parts = [user.full_name.strip()] if user.full_name.strip() else []
+    if user.username:
+        parts.append(f"@{user.username}")
+    return ", ".join(parts)
+
+
+DELETE_FAILED = ("\nI could not delete your message, so the password is still in this chat. "
+                 "Please delete it yourself.")
+
+
+def _clock(moment: datetime) -> str:
+    """``18:47Z``."""
+    return moment.astimezone(UTC).strftime("%H:%MZ")
 
 
 # --------------------------------------------------------------------------- #
@@ -343,6 +490,7 @@ class FatherBot:
         self.factory = factory
         self.output_dir = output_dir or config.output_dir
         self.health = PollHealth(mode=settings.mode)
+        self.access = Access(settings.allowed, settings.access_password)
         self.waiting: deque[Job] = deque()
         self.current: Job | None = None
         self.last_command: dict[int, str] = {}
@@ -359,9 +507,9 @@ class FatherBot:
         bot.session.middleware(PollWatch(self.health))
 
     def build_dispatcher(self) -> Dispatcher:
-        """A Dispatcher with the allowlist in front of every message handler."""
+        """A Dispatcher with the allowlist (and the /auth door) in front of every handler."""
         dispatcher = Dispatcher()
-        dispatcher.message.outer_middleware(AllowList(self.settings.allowed))
+        dispatcher.message.outer_middleware(AllowList(self.access, self.authenticate))
         dispatcher.include_router(self._router())
         return dispatcher
 
@@ -406,8 +554,25 @@ class FatherBot:
         @router.message(F.text.regexp(_WHO_AM_I))
         async def whoami(message: Message) -> None:
             user_id = message.from_user.id if message.from_user else 0
-            await message.answer(f"Your id: <b>{user_id}</b> · allowed. "
-                                 f"Allowed users: {len(self.settings.allowed)}.")
+            guest = self.access.guests.get(user_id)
+            if guest is None:
+                await message.answer(f"<pre>your Telegram id: {user_id}\n"
+                                     "access: allowlist, permanent\n"
+                                     "since: before this session</pre>")
+                return
+            await message.answer(f"<pre>your Telegram id: {user_id}\naccess: password\n"
+                                 f"since: {_clock(guest.since)} this session</pre>\n"
+                                 "If the bot restarts, send /auth again.")
+
+        @router.message(F.text.regexp(_AUTH))
+        async def auth_again(message: Message) -> None:
+            # Only someone already in gets here; the AllowList takes everyone else's.
+            deleted = await self._delete(message)
+            how = ("allowlist, permanent: no password needed"
+                   if message.from_user.id in self.access.allowed
+                   else "password, until the bot restarts")
+            await message.answer(f"You are already in.\n<pre>access: {how}</pre>"
+                                 + ("" if deleted else DELETE_FAILED))
 
         @router.message(Command("status"))
         async def status(message: Message) -> None:
@@ -454,6 +619,79 @@ class FatherBot:
             await message.answer("Send one line of English as text. /help shows an example.")
 
         return router
+
+    # -- the password door ----------------------------------------------------------
+
+    async def authenticate(self, message: Message, attempt: str) -> None:
+        """``/auth <password>`` from an id that is not in: delete it, check it, answer.
+
+        The delete comes first, whatever the outcome, so the answer never sits
+        under a visible password. A delete Telegram refuses is said in the answer.
+        """
+        user = message.from_user
+        if not self.access.enabled:
+            if attempt:
+                await self._delete(message)
+            await message.answer("Password access is not enabled on this bot.\n"
+                                 f"<pre>your Telegram id: {user.id}\n"
+                                 "ask the operator to add it to TELEGRAM_ALLOWED_USERS</pre>")
+            return
+        if not attempt:
+            await message.answer("Send the password after the command:\n"
+                                 "<pre>/auth &lt;password&gt;</pre>")
+            return
+        first_contact = user.id not in self.access.seen
+        deleted = await self._delete(message)
+        outcome = self.access.check(user.id, attempt, name=_who(user))
+        if outcome == "ok":
+            logger.info("Telegram id %s got in with the password (%s guests this session)",
+                        user.id, len(self.access.guests))
+            text = ("You're in. The bot had restarted, so access starts again from here."
+                    if first_contact else
+                    f"You're in.\n<pre>send one line of English, e.g.\n{EXAMPLE}</pre>")
+        elif outcome == "paused":
+            text = ("Too many wrong passwords.\n"
+                    f"<pre>/auth is paused for this id for another "
+                    f"{_minutes(self.access.paused_for(user.id))}\n"
+                    "this one was not checked</pre>")
+        else:
+            logger.warning("wrong /auth password from Telegram id %s", user.id)
+            left = 0 if self.access.paused_for(user.id) else self.access.tries_left(user.id)
+            text = ("That password is not right.\n<pre>"
+                    + (f"{left} tr{'y' if left == 1 else 'ies'} left before /auth pauses "
+                       "for an hour" if left else "no tries left: /auth is paused for an hour")
+                    + "</pre>")
+        await message.answer(text + ("" if deleted else DELETE_FAILED))
+        if outcome == "ok":
+            await self._notify_operators(message.bot, user.id)
+
+    async def _delete(self, message: Message) -> bool:
+        """Delete a message carrying a password; False (never raised) when Telegram refuses."""
+        try:
+            await message.delete()
+        except Exception as exc:  # noqa: BLE001 - the answer matters more than the cleanup
+            logger.warning("could not delete a /auth message from Telegram id %s (%s)",
+                           message.from_user.id if message.from_user else "?",
+                           type(exc).__name__)
+            return False
+        return True
+
+    async def _notify_operators(self, bot: Bot, user_id: int) -> None:
+        """One DM to each allowlisted operator: the shared password was just used."""
+        guest = self.access.guests.get(user_id)
+        if not self.settings.auth_notify or guest is None:
+            return
+        count = len(self.access.guests)
+        label = f" ({html.escape(guest.name)})" if guest.name else ""
+        text = ("Someone used the password.\n"
+                f"<pre>user {user_id}{label}\ngot in at {_clock(guest.since)}\n"
+                f"{count} guest{' is' if count == 1 else 's are'} in this session</pre>")
+        for operator in sorted(self.access.allowed):
+            try:
+                await bot.send_message(operator, text)
+            except Exception as exc:  # noqa: BLE001 - one unreachable operator is not fatal
+                logger.warning("could not tell operator %s about a password login (%s)",
+                               operator, type(exc).__name__)
 
     def status_text(self) -> str:
         """``/status``: the running generation, the queue and the poll loop."""
@@ -622,11 +860,12 @@ async def serve(config: Config, settings: BotSettings, *, provider: str = "auto"
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", settings.port).start()
-    if not settings.allowed:
+    if not settings.allowed and not settings.access_password:
         logger.warning("TELEGRAM_ALLOWED_USERS is empty: every message is refused with the "
                        "sender's id. Add yours and restart.")
-    logger.info("bot up: %s · health on :%s/healthz · allowed users %s", settings.mode,
-                settings.port, len(settings.allowed))
+    logger.info("bot up: %s · health on :%s/healthz · allowed users %s · password access %s",
+                settings.mode, settings.port, len(settings.allowed),
+                "on" if settings.access_password else "off")
     father.start(bot)
     try:
         if settings.mode == "webhook":

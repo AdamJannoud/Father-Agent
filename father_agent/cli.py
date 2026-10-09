@@ -141,7 +141,8 @@ def build_parser() -> argparse.ArgumentParser:
                                      "sub-agent back as a ZIP, with the six stages shown in "
                                      "one message edited in place. Needs the bot extra "
                                      "(pip install -r requirements-bot.txt), "
-                                     "TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USERS. Serves "
+                                     "TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USERS (optionally "
+                                     "BOT_ACCESS_PASSWORD for /auth). Serves "
                                      "GET /healthz on $PORT for a keepalive pinger.")
     bot.add_argument("-p", "--provider", choices=("auto", *KNOWN_PROVIDERS), default="auto",
                      help="force one provider (default: auto — keyed providers, else mock)")

@@ -44,6 +44,10 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      # Optional: the shared /auth password. Typed into Render's form, never
+      # committed; leave it empty and /auth stays off.
+      - key: BOT_ACCESS_PASSWORD
+        sync: false
       # Gemini first, then Groq and Hugging Face as fallbacks. Gemini's free tier
       # allows 20 requests per day per project per model: measured 2026-10-09,
       # Google answered HTTP 429 RESOURCE_EXHAUSTED with quotaId

@@ -27,6 +27,10 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      # Optional: the shared /auth password. Typed into Render's form, never
+      # committed; leave it empty and /auth stays off.
+      - key: BOT_ACCESS_PASSWORD
+        sync: false
       # Gemini, then Groq and Hugging Face behind it for when Gemini's free tier
       # (20 requests per day per project per model) answers 429; see render.yaml.
       # build_chain skips any provider in the order whose key is unset, so

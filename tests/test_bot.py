@@ -34,7 +34,9 @@ else:
 
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.methods import (
+    DeleteMessage,
     DeleteWebhook,
     EditMessageText,
     GetUpdates,
@@ -99,6 +101,8 @@ class RecordingSession(BaseSession):
         self.calls: list[TelegramMethod[Any]] = []
         self._ids = itertools.count(1000)
         self.fail_polls = False
+        #: An exception class DeleteMessage raises, as Telegram does without the right.
+        self.refuse_deletes: type[Exception] | None = None
 
     async def make_request(self, bot: Bot, method: TelegramMethod[Any],
                            timeout: int | None = None):  # noqa: ASYNC109 - BaseSession API
@@ -107,6 +111,8 @@ class RecordingSession(BaseSession):
             if self.fail_polls:
                 raise RuntimeError("telegram unreachable")
             return []
+        if isinstance(method, DeleteMessage) and self.refuse_deletes is not None:
+            raise self.refuse_deletes(method, "Bad Request: message can't be deleted")
         if isinstance(method, SendMessage | EditMessageText | SendDocument):
             chat_id = int(method.chat_id)
             text = getattr(method, "text", None) or getattr(method, "caption", None)
@@ -159,12 +165,14 @@ class Harness:
     """A FatherBot with a real Dispatcher and a recording Bot."""
 
     def __init__(self, config: Config, tmp_path: Path, provider: MockProvider | None = None,
-                 allowed: frozenset[int] = frozenset({OWNER, FRIEND})) -> None:
+                 allowed: frozenset[int] = frozenset({OWNER, FRIEND}), password: str = "",
+                 notify: bool = True) -> None:
         self.session = RecordingSession()
         self.bot = Bot(TOKEN, session=self.session,
                        default=botmod.DefaultBotProperties(parse_mode="HTML"))
         self.provider = provider or MockProvider()
-        settings = botmod.BotSettings(token=TOKEN, allowed=allowed)
+        settings = botmod.BotSettings(token=TOKEN, allowed=allowed, access_password=password,
+                                      auth_notify=notify)
         factory = Factory(config, ProviderChain([self.provider]))
         self.father = botmod.FatherBot(config, settings, factory=factory,
                                        progress=TelegramProgress(min_interval=0),
@@ -175,7 +183,8 @@ class Harness:
 
     async def send(self, text: str, user_id: int = OWNER) -> None:
         """Feed one private-chat text message from ``user_id`` through the Dispatcher."""
-        user = User(id=user_id, is_bot=False, first_name="Owner")
+        user = User(id=user_id, is_bot=False, first_name="Owner" if user_id == OWNER else "Sara",
+                    username=None if user_id == OWNER else "sara_k")
         message = Message(message_id=next(self._update_ids), date=datetime.now(),
                           chat=Chat(id=user_id, type="private"), from_user=user, text=text)
         await self.dispatcher.feed_update(self.bot, Update(update_id=next(self._update_ids),
@@ -218,7 +227,7 @@ def test_start_introduces_the_factory_with_the_keyboard(config: Config, tmp_path
     assert h.bot.default.parse_mode == "HTML"
 
 
-def test_who_am_i_names_the_id_and_the_list_size(config: Config, tmp_path: Path) -> None:
+def test_who_am_i_names_the_id_and_how_it_got_in(config: Config, tmp_path: Path) -> None:
     async def body() -> Harness:
         async with Harness(config, tmp_path) as h:
             await h.send("who am I")
@@ -226,8 +235,8 @@ def test_who_am_i_names_the_id_and_the_list_size(config: Config, tmp_path: Path)
         return h
 
     texts = drive(body).session.texts()
-    assert texts == [f"Your id: <b>{OWNER}</b> · allowed. Allowed users: 2.",
-                     f"Your id: <b>{FRIEND}</b> · allowed. Allowed users: 2."]
+    assert texts == [f"<pre>your Telegram id: {id_}\naccess: allowlist, permanent\n"
+                     "since: before this session</pre>" for id_ in (OWNER, FRIEND)]
 
 
 def test_stranger_is_refused_with_their_id_and_nothing_runs(config: Config,
@@ -419,6 +428,248 @@ def test_oversized_bundle_falls_back_to_text(config: Config, tmp_path: Path,
     fallback = h.session.texts()[-1]
     assert "over Telegram's 0 MB upload cap, so it was not sent." in fallback
     assert "gone at the next restart" in fallback and "agent.py" in fallback
+
+
+# --------------------------------------------------------------------------- #
+# The password door: /auth and /login
+# --------------------------------------------------------------------------- #
+
+PASSWORD = "swordfish 42"
+
+
+class FakeClock:
+    """A monotonic clock the throttle reads, moved by hand."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _reply_after_delete(h: Harness) -> tuple[int, int]:
+    """Indexes of the first DeleteMessage and of the SendMessage that follows it."""
+    order = h.session.calls
+    deleted = next(i for i, c in enumerate(order) if isinstance(c, DeleteMessage))
+    replied = next(i for i, c in enumerate(order) if isinstance(c, SendMessage) and i > deleted)
+    return deleted, replied
+
+
+def test_auth_argument_takes_the_password_verbatim() -> None:
+    assert botmod.auth_argument("/auth swordfish 42") == "swordfish 42"
+    assert botmod.auth_argument("/login   pass  word  ") == "pass  word"
+    assert botmod.auth_argument("/AUTH@AJ_FatherAgent_BOT pw") == "pw"
+    assert botmod.auth_argument("/auth") == ""
+    assert botmod.auth_argument("/authorize pw") is None
+    assert botmod.auth_argument("auth pw") is None and botmod.auth_argument(None) is None
+
+
+def test_stranger_is_offered_auth_when_a_password_is_set(config: Config,
+                                                         tmp_path: Path) -> None:
+    async def body() -> Harness:
+        async with Harness(config, tmp_path, password=PASSWORD) as h:
+            await h.send(SAMPLE_COMMAND, user_id=STRANGER)
+        return h
+
+    h = drive(body)
+    assert h.session.texts() == [
+        f"Not allowed.\n<pre>your Telegram id: {STRANGER}\nsend /auth &lt;password&gt; to "
+        "get in, or ask the operator to add your id</pre>\n"
+        "Nothing was planned, nothing was spent."]
+    assert h.father.factory.last_spec is None and not (tmp_path / "out").exists()
+
+
+def test_correct_password_admits_deletes_first_and_tells_the_operators(
+        config: Config, tmp_path: Path) -> None:
+    async def body() -> Harness:
+        async with Harness(config, tmp_path, password=PASSWORD) as h:
+            await h.send("hello", user_id=STRANGER)
+            await h.send(f"/auth {PASSWORD}", user_id=STRANGER)
+            await h.send("/whoami", user_id=STRANGER)
+        return h
+
+    h = drive(body)
+    assert STRANGER in h.father.access.guests and h.father.access.permits(STRANGER)
+    (deleted,) = h.session.of(DeleteMessage)
+    assert (int(deleted.chat_id), deleted.message_id) == (STRANGER, 3)  # the /auth message
+    d, r = _reply_after_delete(h)
+    assert d < r
+    replies = [m for m in h.session.of(SendMessage) if int(m.chat_id) == STRANGER]
+    assert replies[1].text == ("You're in.\n<pre>send one line of English, e.g.\n"
+                               f"{botmod.EXAMPLE}</pre>")
+    assert replies[2].text.startswith(f"<pre>your Telegram id: {STRANGER}\naccess: password\n"
+                                      "since: ")
+    assert replies[2].text.endswith("Z this session</pre>\nIf the bot restarts, send /auth again.")
+    dms = {int(m.chat_id): m.text for m in h.session.of(SendMessage)
+           if int(m.chat_id) in (OWNER, FRIEND)}
+    assert set(dms) == {OWNER, FRIEND}
+    assert dms[OWNER].startswith(f"Someone used the password.\n<pre>user {STRANGER} "
+                                 "(Sara, @sara_k)\ngot in at ")
+    assert dms[OWNER].endswith("\n1 guest is in this session</pre>")
+    assert all(PASSWORD not in m.text for m in h.session.of(SendMessage))
+
+
+def test_login_is_the_same_door_and_a_restart_is_named(config: Config, tmp_path: Path) -> None:
+    async def body() -> Harness:
+        async with Harness(config, tmp_path, password=PASSWORD, notify=False) as h:
+            await h.send(f"/login {PASSWORD}", user_id=STRANGER)  # first words this session
+        return h
+
+    h = drive(body)
+    assert h.session.texts() == ["You're in. The bot had restarted, so access starts again "
+                                 "from here."]
+    assert len(h.session.of(DeleteMessage)) == 1  # and BOT_AUTH_NOTIFY=0 sent no DM
+
+
+def test_wrong_password_refuses_deletes_and_counts(config: Config, tmp_path: Path) -> None:
+    async def body() -> Harness:
+        async with Harness(config, tmp_path, password=PASSWORD) as h:
+            await h.send("/auth swordfish-41", user_id=STRANGER)
+            await h.send(SAMPLE_COMMAND, user_id=STRANGER)
+        return h
+
+    h = drive(body)
+    assert not h.father.access.permits(STRANGER) and not h.father.access.guests
+    assert len(h.session.of(DeleteMessage)) == 1
+    d, r = _reply_after_delete(h)
+    assert d < r
+    wrong, refused = h.session.texts()
+    assert wrong == ("That password is not right.\n"
+                     "<pre>4 tries left before /auth pauses for an hour</pre>")
+    assert refused.startswith("Not allowed.") and h.father.factory.last_spec is None
+
+
+def test_five_wrong_pauses_auth_then_it_releases(config: Config, tmp_path: Path) -> None:
+    clock = FakeClock()
+
+    async def body() -> Harness:
+        async with Harness(config, tmp_path, password=PASSWORD) as h:
+            h.father.access.clock = clock
+            for n in range(5):
+                await h.send(f"/auth wrong-{n}", user_id=STRANGER)
+            await h.send(f"/auth {PASSWORD}", user_id=STRANGER)  # right, but paused
+            assert not h.father.access.permits(STRANGER)
+            clock.now += botmod.AUTH_WINDOW - 60
+            await h.send(f"/auth {PASSWORD}", user_id=STRANGER)  # still paused
+            clock.now += 61
+            await h.send(f"/auth {PASSWORD}", user_id=STRANGER)  # the pause has lifted
+        return h
+
+    h = drive(body)
+    texts = h.session.texts()
+    assert [t.split("<pre>")[1].split("</pre>")[0] for t in texts[:5]] == [
+        "4 tries left before /auth pauses for an hour",
+        "3 tries left before /auth pauses for an hour",
+        "2 tries left before /auth pauses for an hour",
+        "1 try left before /auth pauses for an hour",
+        "no tries left: /auth is paused for an hour"]
+    assert texts[5] == ("Too many wrong passwords.\n<pre>/auth is paused for this id for "
+                        "another 60 minutes\nthis one was not checked</pre>")
+    assert "for another 1 minute\n" in texts[6]
+    assert texts[7].startswith("You're in.")
+    assert h.father.access.permits(STRANGER)
+    assert len(h.session.of(DeleteMessage)) == 8  # every attempt, paused ones included
+
+
+def test_throttle_is_per_id_and_old_tries_expire() -> None:
+    clock = FakeClock()
+    access = botmod.Access(frozenset({OWNER}), PASSWORD, clock=clock)
+    for _ in range(4):
+        assert access.check(STRANGER, "nope") == "wrong"
+    assert access.tries_left(STRANGER) == 1 and access.tries_left(FRIEND) == 5
+    clock.now += botmod.AUTH_WINDOW
+    assert access.tries_left(STRANGER) == 5  # an hour later the old tries no longer count
+    assert access.check(FRIEND, PASSWORD) == "ok" and FRIEND in access.guests
+    assert botmod.Access(frozenset(), "").check(STRANGER, "") == "off"
+
+
+def test_allowlisted_ids_never_need_the_password(config: Config, tmp_path: Path) -> None:
+    async def body() -> Harness:
+        async with Harness(config, tmp_path, password=PASSWORD) as h:
+            await h.send("/whoami")
+            await h.send("/status", user_id=FRIEND)
+            await h.send("/auth not-the-password")
+        return h
+
+    h = drive(body)
+    whoami, status, already = h.session.texts()
+    assert "access: allowlist, permanent" in whoami and status.startswith("Idle.")
+    assert already == ("You are already in.\n<pre>access: allowlist, permanent: no password "
+                       "needed</pre>")
+    assert len(h.session.of(DeleteMessage)) == 1  # a password-shaped message is still removed
+    assert not h.father.access.guests and h.father.access.tries_left(OWNER) == 5
+
+
+@pytest.mark.parametrize("refusal", [TelegramBadRequest, TelegramForbiddenError],
+                         ids=["bad-request", "forbidden"])
+@pytest.mark.parametrize("attempt", [PASSWORD, "wrong"], ids=["right", "wrong"])
+def test_a_refused_delete_does_not_crash_and_is_said(config: Config, tmp_path: Path,
+                                                     refusal: type[Exception],
+                                                     attempt: str) -> None:
+    async def body() -> Harness:
+        async with Harness(config, tmp_path, password=PASSWORD, notify=False) as h:
+            h.session.refuse_deletes = refusal
+            await h.send("hi", user_id=STRANGER)
+            await h.send(f"/auth {attempt}", user_id=STRANGER)
+        return h
+
+    h = drive(body)
+    reply = h.session.texts()[-1]
+    assert reply.startswith("You're in." if attempt == PASSWORD else "That password is not right.")
+    assert reply.endswith("I could not delete your message, so the password is still in this "
+                          "chat. Please delete it yourself.")
+    assert h.father.access.permits(STRANGER) is (attempt == PASSWORD)
+
+
+def test_unset_password_is_a_closed_door(config: Config, tmp_path: Path) -> None:
+    async def body() -> Harness:
+        async with Harness(config, tmp_path) as h:
+            await h.send("/auth anything at all", user_id=STRANGER)
+            await h.send("/auth", user_id=STRANGER)
+        return h
+
+    h = drive(body)
+    texts = h.session.texts()
+    assert texts == ["Password access is not enabled on this bot.\n<pre>your Telegram id: "
+                     f"{STRANGER}\nask the operator to add it to TELEGRAM_ALLOWED_USERS</pre>"] * 2
+    assert not h.father.access.guests and not h.father.access.permits(STRANGER)
+
+
+def test_the_password_never_reaches_a_log_record(config: Config, tmp_path: Path,
+                                                 caplog: pytest.LogCaptureFixture) -> None:
+    guess = "swordfish 41 typo"
+
+    async def body() -> Harness:
+        async with Harness(config, tmp_path, password=PASSWORD) as h:
+            h.session.refuse_deletes = TelegramBadRequest
+            await h.send(f"/auth {guess}", user_id=STRANGER)
+            await h.send(f"/auth {PASSWORD}", user_id=STRANGER)
+        return h
+
+    with caplog.at_level(logging.DEBUG):
+        h = drive(body)
+    records = [r.getMessage() for r in caplog.records]
+    assert any(f"wrong /auth password from Telegram id {STRANGER}" in m for m in records)
+    assert any(f"Telegram id {STRANGER} got in with the password" in m for m in records)
+    for secret in (PASSWORD, guess):
+        assert all(secret not in m for m in records)
+        assert all(secret not in m.text for m in h.session.of(SendMessage))
+
+
+def test_password_settings_load_and_stay_secret(monkeypatch: pytest.MonkeyPatch,
+                                                tmp_path: Path) -> None:
+    load = lambda: botmod.BotSettings.load(Config.load(env_file=tmp_path / "x.env"))  # noqa: E731
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", TOKEN)
+    settings = load()
+    assert settings.access_password == "" and settings.auth_notify is True
+    assert any("off: the allowlist is the only way in" in line for line in settings.describe())
+    monkeypatch.setenv("BOT_ACCESS_PASSWORD", f"  {PASSWORD}\n")
+    monkeypatch.setenv("BOT_AUTH_NOTIFY", "0")
+    settings = load()
+    assert settings.access_password == PASSWORD and settings.auth_notify is False
+    assert PASSWORD not in repr(settings) and PASSWORD not in "\n".join(settings.describe())
+    config = Config.load(env_file=tmp_path / "x.env")
+    assert PASSWORD in config.secrets and PASSWORD not in repr(config)
 
 
 # --------------------------------------------------------------------------- #

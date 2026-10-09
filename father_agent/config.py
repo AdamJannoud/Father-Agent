@@ -134,6 +134,7 @@ class Config:
     hf_token: str = ""
     gemini_api_key: str = ""
     telegram_bot_token: str = ""
+    bot_access_password: str = field(default="", repr=False)
     groq_model: str = DEFAULT_GROQ_MODEL
     hf_model: str = DEFAULT_HF_MODEL
     gemini_model: str = DEFAULT_GEMINI_MODEL
@@ -201,6 +202,8 @@ class Config:
             "hf_token": _secret("HF_TOKEN"),
             "gemini_api_key": _secret("GEMINI_API_KEY") or _secret("GOOGLE_API_KEY"),
             "telegram_bot_token": _secret("TELEGRAM_BOT_TOKEN"),
+            # Not _secret(): a real passphrase may well begin with "your" or "xxx".
+            "bot_access_password": os.environ.get("BOT_ACCESS_PASSWORD", "").strip(),
             "groq_model": os.environ.get("GROQ_MODEL", "").strip() or DEFAULT_GROQ_MODEL,
             "hf_model": os.environ.get("HF_MODEL", "").strip() or DEFAULT_HF_MODEL,
             "gemini_model": os.environ.get("GEMINI_MODEL", "").strip() or DEFAULT_GEMINI_MODEL,
@@ -230,7 +233,7 @@ class Config:
     def secrets(self) -> list[str]:
         """Return every configured secret, for log redaction."""
         return [s for s in (self.groq_api_key, self.hf_token, self.gemini_api_key,
-                            self.telegram_bot_token) if s]
+                            self.telegram_bot_token, self.bot_access_password) if s]
 
     def has_key(self, provider: str) -> bool:
         """Return True when ``provider`` has what it needs to make a call."""

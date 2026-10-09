@@ -309,7 +309,8 @@ says at which stage it stopped and what failed, nothing is written, and
 | `/again` | build your last line again |
 | `/retry` | rebuild from the spec that survived a failed run |
 | `/status` | what is running, the queue, and whether the poll loop is alive |
-| `/whoami`, `who am I` | your Telegram id and whether it is allowed |
+| `/whoami`, `who am I` | your Telegram id and how you got in (allowlist or password) |
+| `/auth <password>`, `/login <password>` | get in with the shared password, when the operator set one |
 | `/start`, `/help` | the introduction and the command list |
 
 **Set up (local, five minutes).** The bot is an optional extra; the core never
@@ -331,6 +332,21 @@ id in `TELEGRAM_ALLOWED_USERS` (comma-separated for more than one person) and
 restart. The allowlist fails closed on purpose: an open bot would let anyone
 spend your free provider quota through your key. Without a provider key the bot
 runs on the offline mock, exactly like `python main.py new`.
+
+**Letting someone in without a restart.** Set `BOT_ACCESS_PASSWORD` and the
+refusal offers a second door: `/auth <password>` (or `/login <password>`; the
+whole rest of the line is the password, spaces included) adds the sender's id
+for as long as the process runs. The bot deletes the message carrying the
+password before it checks it, on a right and a wrong guess alike; where Telegram
+will not let it (a group without the delete right) the reply says so and asks
+the sender to delete it. A wrong password is refused without saying whether
+it was close, and five wrong tries in an hour pause `/auth` for that id for an
+hour. Every successful login DMs each allowlisted id (`BOT_AUTH_NOTIFY=0` turns
+that off). Password access is never written to disk, so after a restart, which
+on the free host is every spin-down, a guest sends `/auth` once more. Ids in
+`TELEGRAM_ALLOWED_USERS` stay in permanently and never need the password. Left
+unset, `/auth` answers that password access is not enabled and the allowlist is
+the only way in. The password is redacted from every log line like the token.
 
 The process also serves `GET /healthz` on `$PORT` (default 8080). It answers
 `200` with `{"status": "ok", "seconds_since_poll": ...}` only while a Telegram
@@ -364,8 +380,9 @@ koyeb.com/docs/reference/instances, read 2026-10-09.
    service that installs `requirements.txt` then `requirements-bot.txt`, starts `python main.py bot` and
    health-checks `/healthz`. `.python-version` pins Python 3.12.
 2. Fill in the secrets it asks for: `TELEGRAM_BOT_TOKEN`,
-   `TELEGRAM_ALLOWED_USERS`, and `GEMINI_API_KEY`. You type these into Render's
-   own form and they are stored as secrets there. The Blueprint also sets
+   `TELEGRAM_ALLOWED_USERS`, `GEMINI_API_KEY`, and optionally
+   `BOT_ACCESS_PASSWORD` (leave it empty to keep `/auth` off). You type these
+   into Render's own form and they are stored as secrets there. The Blueprint also sets
    `FATHER_PROVIDER_ORDER=gemini,groq,huggingface`. Gemini's free tier allows
    20 requests per day per project per model, and once it answers `429` the
    factory falls through to the next provider. A provider with no key is

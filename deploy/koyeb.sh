@@ -17,6 +17,7 @@
 # tier allows 20 requests per day per project per model, and once it answers 429
 # the factory retries, then moves to the next keyed provider. Providers with no
 # key are skipped, so the GROQ_API_KEY and HF_TOKEN secrets are optional.
+# BOT_ACCESS_PASSWORD is optional too: the shared /auth password, off when empty.
 set -euo pipefail
 
 REPO="${REPO:-github.com/AdamJannoud/Father-Agent}"
@@ -33,13 +34,15 @@ common=(
   --env "GEMINI_API_KEY={{secret.GEMINI_API_KEY}}"
   --env "GROQ_API_KEY={{secret.GROQ_API_KEY}}"
   --env "HF_TOKEN={{secret.HF_TOKEN}}"
+  --env "BOT_ACCESS_PASSWORD={{secret.BOT_ACCESS_PASSWORD}}"
   --env "FATHER_PROVIDER_ORDER=gemini,groq,huggingface"
   --env "PORT=8000"
 )
 
 case "${1:-}" in
   secrets)
-    for name in TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USERS GEMINI_API_KEY GROQ_API_KEY HF_TOKEN; do
+    for name in TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USERS GEMINI_API_KEY GROQ_API_KEY HF_TOKEN \
+                BOT_ACCESS_PASSWORD; do
       read -r -s -p "$name (empty to skip): " value; echo
       [ -n "$value" ] && koyeb secrets create "$name" --value "$value"
     done

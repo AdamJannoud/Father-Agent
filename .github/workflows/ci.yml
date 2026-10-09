@@ -2,9 +2,12 @@
 #
 # `tests` runs scripts/verify.sh unchanged (venv, ruff, pytest, the offline
 # mock end-to-end generations, the self-evolution smoke check), so CI and a
-# local run can never drift. `lint` runs ruff alone so a lint failure reads
-# differently from a test failure. No secrets, no keys, no network beyond
-# pip install: it runs the same on a fork.
+# local run can never drift. It installs the optional Telegram bot extra
+# (FATHER_REQUIRE_BOT=1), so the offline bot suite runs on 3.11 and 3.12 and a
+# missing aiogram fails instead of skipping. `core` runs the same verify.sh
+# WITHOUT the extra, proving a core-only install is unharmed. `lint` runs ruff
+# alone so a lint failure reads differently from a test failure. No secrets,
+# no keys, no network beyond pip install: it runs the same on a fork.
 name: ci
 
 on:
@@ -50,7 +53,35 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
-      - name: bash scripts/verify.sh
+            requirements-bot.txt
+      - name: bash scripts/verify.sh (with the bot extra)
+        env:
+          PYTHON: python
+          FATHER_REQUIRE_BOT: "1"
+        run: bash scripts/verify.sh
+      - name: offline bot suite (must run, never skip)
+        env:
+          FATHER_REQUIRE_BOT: "1"
+          FATHER_ENV_FILE: ${{ github.workspace }}/.verify-no-env
+        run: .venv/bin/python -m pytest -v -rs tests/test_bot.py tests/test_telegram_progress.py
+
+  core:
+    name: core install, no bot extra (verify.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: bash scripts/verify.sh (core requirements only)
         env:
           PYTHON: python
         run: bash scripts/verify.sh
+      - name: aiogram is absent, so the bot suite skipped rather than ran
+        run: |
+          ! .venv/bin/python -c 'import aiogram'

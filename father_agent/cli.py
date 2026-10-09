@@ -1,5 +1,5 @@
 """Command-line interface: ``new``, ``list``, ``show``, ``deploy``, ``capabilities``,
-``evolve``, ``providers``, ``doctor``.
+``evolve``, ``bot``, ``providers``, ``doctor``.
 
 ``main.py`` at the repository root is a thin wrapper around :func:`main`.
 Exit codes: 0 success, 1 the factory failed, 2 bad usage or configuration.
@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib.metadata
+import importlib.util
 import json
 import logging
 import os
@@ -135,6 +136,18 @@ def build_parser() -> argparse.ArgumentParser:
                           "CI=true")
     evo.add_argument("--log", action="store_true", help="print the evolution ledger and exit")
 
+    bot = sub.add_parser("bot", help="run the factory as a Telegram bot (optional extra)",
+                         description="Serve the factory in Telegram: one line in, a validated "
+                                     "sub-agent back as a ZIP, with the six stages shown in "
+                                     "one message edited in place. Needs the bot extra "
+                                     "(pip install -r requirements-bot.txt), "
+                                     "TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_USERS. Serves "
+                                     "GET /healthz on $PORT for a keepalive pinger.")
+    bot.add_argument("-p", "--provider", choices=("auto", *KNOWN_PROVIDERS), default="auto",
+                     help="force one provider (default: auto — keyed providers, else mock)")
+    bot.add_argument("--check", action="store_true",
+                     help="check the bot settings offline and exit; contacts nothing")
+
     prov = sub.add_parser("providers", help="show the provider chain and key status")
     prov.add_argument("--check", action="store_true",
                       help="contact each keyed provider (GET /models, no tokens spent)")
@@ -214,6 +227,26 @@ def _subagent_dirs(root: Path) -> list[Path]:
     if not root.is_dir():
         return []
     return sorted(p for p in root.iterdir() if (p / "spec.json").is_file())
+
+
+BOT_EXTRA_HINT = ("the Telegram bot needs the optional bot extra, which is not installed:\n"
+                  "  pip install -r requirements-bot.txt")
+
+
+def _cmd_bot(args: argparse.Namespace, config: Config) -> int:
+    """Run the Telegram bot; aiogram is imported only here, so the core never needs it."""
+    try:
+        from . import bot
+    except ImportError as exc:
+        err(f"{BOT_EXTRA_HINT}\n  ({exc})")
+        return 2
+    if args.check:
+        settings = bot.BotSettings.load(config)
+        out("telegram bot settings (nothing was contacted)")
+        for line in settings.describe():
+            out(f"  {line}")
+        return 0
+    return bot.run(config, provider=args.provider)
 
 
 def _cmd_list(args: argparse.Namespace, config: Config) -> int:
@@ -446,6 +479,13 @@ async def _cmd_doctor(args: argparse.Namespace, config: Config | None,
     row("ruff", f"{ruff[0]} {_version('ruff')}" if ruff else
         "not installed: lint step will be skipped (pip install ruff)", True if ruff else None)
     docker = shutil.which("docker")
+    if importlib.util.find_spec("aiogram") is None:
+        row("telegram", "bot extra not installed (optional: pip install -r "
+                        "requirements-bot.txt)", None)
+    else:
+        token = "token " + mask(config.telegram_bot_token)
+        row("telegram", f"aiogram {_version('aiogram')} · {token} · python main.py bot",
+            True if config.telegram_bot_token else None)
     row("docker", docker or "not installed: `deploy --target docker` prints the commands "
                             "instead of building", True if docker else None)
     required = ("httpx", "pydantic", "python-dotenv", "pyyaml")
@@ -514,6 +554,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_capabilities(args, config)
         if args.command == "evolve":
             return asyncio.run(_cmd_evolve(args, config))
+        if args.command == "bot":
+            return _cmd_bot(args, config)
         if args.command == "providers":
             return asyncio.run(_cmd_providers(args, config))
         if args.command == "doctor":

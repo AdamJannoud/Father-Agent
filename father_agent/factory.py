@@ -100,6 +100,9 @@ class Factory:
                            max_repairs=config.max_repair_attempts,
                            temperature=config.temperature)
         self._step = (0, "")
+        #: The spec of the current or last run once planning has produced one, so a
+        #: caller can replay it after a later stage failed (the bot's /retry).
+        self.last_spec: SubAgentSpec | None = None
 
     def _provider_event(self, message: str) -> None:
         """Show provider retries and switches against the current stage."""
@@ -146,6 +149,8 @@ class Factory:
         if not out_root.is_absolute():
             out_root = Path.cwd() / out_root
         providers: list[str] = []
+        self.last_spec = None
+        self._step = (0, "")
         try:
             if spec is None:
                 self._progress("spec", 1, f"planning · provider {self.chain.primary.label}")
@@ -160,6 +165,7 @@ class Factory:
                                             framework=framework)
             apply_delivery(spec)
             spec.run_example = self.run_example(spec, out_root)
+            self.last_spec = spec
             target = out_root / spec.slug
             if target.exists() and not force and not dry_run:
                 raise OutputExistsError(f"{target} already exists; pass --force to replace it "

@@ -5,7 +5,8 @@
 #
 #   bash scripts/verify.sh
 #
-# Steps: venv + deps → ruff on the project → pytest → main.py --help →
+# Steps: venv + deps → ruff on the project → pytest → the bot extra (bot --check
+# when aiogram is installed, the install hint when it is not) → main.py --help →
 # main.py doctor → end-to-end generations into sample_output/: the cli sample,
 # then one per delivery interface (telegram, web/streamlit, web/fastapi, api),
 # each re-validated from disk, plus a deploy dry run, then the self-evolution
@@ -52,6 +53,23 @@ else
   fi
 fi
 
+# The optional Telegram bot extra, on top of the core: FATHER_REQUIRE_BOT=1 (CI)
+# installs it and makes tests/test_bot.py fail rather than skip without it. A
+# second step, because aiogram 3.31 caps pydantic below the core's 2.14.0 pin.
+if [ "${FATHER_REQUIRE_BOT:-}" = "1" ]; then
+  BOT_STAMP="$VENV/.father-bot-requirements.sha256"
+  BOT_WANT="$(cat requirements-bot.txt | sha256sum | cut -d' ' -f1)"
+  if [ "$(cat "$BOT_STAMP" 2>/dev/null || true)" = "$BOT_WANT" ] \
+     && "$VPY" -c 'import aiogram, aiohttp' 2>/dev/null; then
+    say "bot extra already installed (requirements-bot.txt unchanged)"
+  else
+    say "installing requirements-bot.txt (FATHER_REQUIRE_BOT=1)"
+    PIP_DEFAULT_TIMEOUT=20 "$VPY" -m pip install -q --disable-pip-version-check \
+      -r requirements-bot.txt || fail "could not install the bot extra"
+    echo "$BOT_WANT" > "$BOT_STAMP"
+  fi
+fi
+
 # No keys and no .env: everything below must work offline.
 export FATHER_ENV_FILE="$ROOT/.verify-no-env"
 unset GROQ_API_KEY HF_TOKEN FATHER_LOCAL_LLM_URL || true
@@ -63,6 +81,21 @@ fi
 
 say "pytest"
 "$VPY" -m pytest -q || fail "test suite failed"
+
+# The Telegram bot is an optional extra: with it, its offline suite ran above
+# and `bot --check` must pass; without it, `bot` must explain the install.
+if "$VPY" -c 'import aiogram' 2>/dev/null; then
+  say "python main.py bot --check (bot extra installed; placeholder token, nothing contacted)"
+  TELEGRAM_BOT_TOKEN="123456789:verify-placeholder-not-a-token" \
+    "$VPY" main.py bot --check >/dev/null || fail "bot --check failed"
+  echo "ok: the offline bot suite (tests/test_bot.py) ran in the pytest step above"
+else
+  say "python main.py bot (bot extra NOT installed: must explain the install)"
+  BOT_ERR="$("$VPY" main.py bot 2>&1 >/dev/null || true)"
+  printf '%s\n' "$BOT_ERR" | grep -q 'requirements-bot.txt' \
+    || fail "bot without aiogram did not point at requirements-bot.txt"
+  echo "ok: core install unharmed; tests/test_bot.py skipped (pip install -r requirements-bot.txt)"
+fi
 
 say "python main.py --help"
 "$VPY" main.py --help >/dev/null || fail "main.py --help"

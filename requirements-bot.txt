@@ -1,0 +1,10 @@
+# The optional Telegram bot extra: python main.py bot (father_agent/bot.py).
+# The core never needs it. Install it ON TOP of the core, as a second step:
+#     pip install -r requirements.txt
+#     pip install -r requirements-bot.txt
+# Two steps because aiogram 3.31.0 requires pydantic<2.14 while the core pins
+# 2.14.0; this file moves pydantic to the newest release aiogram supports, and
+# the whole suite runs on it in CI (the core-only job keeps 2.14.0).
+aiogram==3.31.0        # Telegram Bot API client: polling, dispatcher, middlewares
+aiohttp==3.14.4        # the /healthz server (aiogram's own HTTP client, pinned here)
+pydantic==2.13.5       # aiogram 3.31.0: pydantic>=2.4.1,<2.14

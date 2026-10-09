@@ -125,6 +125,7 @@ class Config:
 
     groq_api_key: str = ""
     hf_token: str = ""
+    telegram_bot_token: str = ""
     groq_model: str = DEFAULT_GROQ_MODEL
     hf_model: str = DEFAULT_HF_MODEL
     groq_base_url: str = DEFAULT_GROQ_BASE_URL
@@ -187,6 +188,7 @@ class Config:
         values: dict[str, object] = {
             "groq_api_key": _secret("GROQ_API_KEY"),
             "hf_token": _secret("HF_TOKEN"),
+            "telegram_bot_token": _secret("TELEGRAM_BOT_TOKEN"),
             "groq_model": os.environ.get("GROQ_MODEL", "").strip() or DEFAULT_GROQ_MODEL,
             "hf_model": os.environ.get("HF_MODEL", "").strip() or DEFAULT_HF_MODEL,
             "groq_base_url": os.environ.get("GROQ_BASE_URL", "").strip() or DEFAULT_GROQ_BASE_URL,
@@ -212,7 +214,7 @@ class Config:
     @property
     def secrets(self) -> list[str]:
         """Return every configured secret, for log redaction."""
-        return [s for s in (self.groq_api_key, self.hf_token) if s]
+        return [s for s in (self.groq_api_key, self.hf_token, self.telegram_bot_token) if s]
 
     def has_key(self, provider: str) -> bool:
         """Return True when ``provider`` has what it needs to make a call."""

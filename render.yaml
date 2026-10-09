@@ -1,0 +1,35 @@
+# Recipe A (the default): the Father Agent's Telegram bot on Render's FREE web
+# service, kept awake by a pinger. Render → New → Blueprint → this repository.
+#
+# Why a web service and not a worker: Render has no free background worker, and
+# a free web service spins down after 15 minutes without INBOUND traffic. A
+# polling bot only makes outbound calls, so point a free pinger (UptimeRobot,
+# cron-job.org) at https://<service>.onrender.com/healthz every 10 minutes.
+# /healthz answers 200 only while the poll loop is alive, so the pinger doubles
+# as an alert. One always-on service fits the 750 free hours a month; the disk
+# is wiped on every restart, which is why each bundle is delivered as a ZIP.
+#
+# The genuinely 24/7 upgrade (no sleep, no pinger, $7/month) is
+# deploy/render-worker.yaml. Secrets are entered in the dashboard (sync: false),
+# never committed.
+services:
+  - type: web
+    name: father-agent-bot
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt && pip install -r requirements-bot.txt
+    startCommand: python main.py bot
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ALLOWED_USERS
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+      - key: FATHER_LOG_LEVEL
+        value: INFO

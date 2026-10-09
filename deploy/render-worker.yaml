@@ -1,0 +1,29 @@
+# Recipe C (the upgrade): the bot as a Render background worker. No idle spin-
+# down, no pinger, no cold start. Render has no free worker; the smallest paid
+# instance is 0.5c-512mb (0.5 CPU, 512 MB) at $7/month, from render.com/pricing,
+# read 2026-10-09.
+#
+# Use it instead of the root render.yaml: Render → New → Blueprint → this
+# repository, and set the Blueprint path to deploy/render-worker.yaml. A worker
+# has no public URL, so there is no /healthz to ping (the server still listens
+# on $PORT for a local check) and nothing to keep awake.
+services:
+  - type: worker
+    name: father-agent-bot
+    runtime: python
+    plan: 0.5c-512mb
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt && pip install -r requirements-bot.txt
+    startCommand: python main.py bot
+    autoDeploy: true
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ALLOWED_USERS
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+      - key: FATHER_LOG_LEVEL
+        value: INFO

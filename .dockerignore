@@ -1,0 +1,16 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+.venv
+venv
+logs
+subagents
+sample_output
+.bolter
+.bolter-task.md
+.local
+**/__pycache__
+.pytest_cache
+.ruff_cache

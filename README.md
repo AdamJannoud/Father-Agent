@@ -215,6 +215,8 @@ hold one that writes good code), but any llama.cpp / OpenAI-compatible server on
 | `python main.py evolve "<task>"` | detect a missing capability and propose an additive upgrade, without generating anything; asks `[y/N]` |
 | `  --yes` | approve without a prompt (scripted use); still declined when `CI=true` |
 | `  --log` | print the evolution ledger |
+| `python main.py bot` | serve the factory as a Telegram bot (optional extra: `pip install -r requirements-bot.txt`); see [Run it in Telegram](#run-it-in-telegram) |
+| `  --check` | check the bot settings offline and exit; contacts nothing |
 | `python main.py providers [--check]` | show the provider chain and key status |
 | `python main.py doctor [--online]` | check Python, config, providers, prompts, ruff, paths |
 
@@ -274,6 +276,127 @@ python main.py deploy solana_dashboard --target hf-spaces
 The factory prepares a deploy; it does not push one and never holds a token.
 Secrets live in `.env` (git-ignored, docker-ignored) or in the host's own
 secret settings.
+
+## Run it in Telegram
+
+The factory can also live in a Telegram chat: send one line of English, watch
+the six stages land in one message that is edited in place, and get the
+validated bundle back as a ZIP.
+
+```text
+you      a Solana wallet watcher that logs balance changes every 60s and plots them
+father   done · 0:04
+         father 1/6 planning · provider groq/qwen/qwen3.8-27b
+         father 2/6 wallet_watcher · blockchain · httpx + pandas + matplotlib
+         father 3/6 wrote agent.py: 5 classes, 10 methods, docstrings · 288 lines · wrote test_agent.py · 83 lines
+         father 4/6 ast ok · compile ok · ruff ok · ... · secrets ok · nothing was executed
+         father 5/6 Dockerfile · .dockerignore · .env.example · bootstrap.py · requirements.txt
+         father 6/6 subagents/wallet_watcher/ · 9 files
+father   wallet_watcher is written and validated. 9 files, gate green.
+father   📦 wallet_watcher.zip   next: python -m subagents.wallet_watcher.agent --once
+```
+
+Those lines are the factory's own progress feed (the same six stages the
+terminal prints), not a second progress system. One generation runs at a time;
+a second line queues and is told its position. When the gate says no, the bot
+says at which stage it stopped and what failed, nothing is written, and
+`/retry` replays the spec that survived.
+
+| In the chat | What it does |
+| --- | --- |
+| any line of text, or `/new <line>` | plan, write, validate and send back `<slug>.zip` |
+| `/again` | build your last line again |
+| `/retry` | rebuild from the spec that survived a failed run |
+| `/status` | what is running, the queue, and whether the poll loop is alive |
+| `/whoami`, `who am I` | your Telegram id and whether it is allowed |
+| `/start`, `/help` | the introduction and the command list |
+
+**Set up (local, five minutes).** The bot is an optional extra; the core never
+imports aiogram. Install it as a second step after the core: aiogram 3.31.0
+requires `pydantic<2.14`, so `requirements-bot.txt` moves pydantic from the
+core's 2.14.0 to 2.13.5 (CI runs the whole suite on both).
+
+```bash
+pip install -r requirements-bot.txt    # after the core install; moves pydantic to 2.13.5
+# talk to @BotFather → /newbot → copy the token into .env:
+#   TELEGRAM_BOT_TOKEN=123456789:AA...
+#   TELEGRAM_ALLOWED_USERS=            # leave empty for now
+python main.py bot --check             # offline: prints the settings, token masked
+python main.py bot
+```
+
+Send the bot anything: it answers **Not allowed** with your numeric id. Put that
+id in `TELEGRAM_ALLOWED_USERS` (comma-separated for more than one person) and
+restart. The allowlist fails closed on purpose: an open bot would let anyone
+spend your free provider quota through your key. Without a provider key the bot
+runs on the offline mock, exactly like `python main.py new`.
+
+The process also serves `GET /healthz` on `$PORT` (default 8080). It answers
+`200` with `{"status": "ok", "seconds_since_poll": ...}` only while a Telegram
+long poll has succeeded in the last two minutes, and `503` (`starting` or
+`stale`) otherwise, so whatever pings it is also checking that the bot is
+really polling.
+
+### Keep it running all day
+
+Neither Render nor Koyeb offers a free background worker, and both free tiers
+put a web service to sleep when no **inbound** traffic arrives. A polling bot
+only makes outbound calls. So the free recipe is a web service kept awake by a
+pinger, and the honest 24/7 recipe is a small paid worker.
+
+| Recipe | Cost | What you get |
+| --- | --- | --- |
+| **A · Render free web service + pinger** (default) | free | One always-on service fits the 750 free hours a month. Sleeps after 15 idle minutes, so the pinger is what keeps it up. Disk wiped on restart; about a minute of cold start after a gap. |
+| B · Koyeb free web service + pinger | free | 512 MB, 0.1 vCPU, one free instance per organization, Frankfurt or Washington. The same keepalive trick, with less CPU. |
+| **C · paid background worker** (the upgrade) | Render $7/month (`0.5c-512mb`) · Koyeb $1.61/month (eco-nano) or $2.68/month (nano) | A real worker: no idle sleep, no pinger, no cold start, restarts cleanly. The only one of the three that is genuinely 24/7. |
+
+Prices and limits as published on render.com/pricing, render.com/docs/free and
+koyeb.com/docs/reference/instances, read 2026-10-09.
+
+**Recipe A: Render, free (the default).**
+
+1. Push this repository to GitHub. In Render: **New → Blueprint**, pick the
+   repository. Render reads [`render.yaml`](render.yaml): a free Python web
+   service that installs `requirements.txt` then `requirements-bot.txt`, starts `python main.py bot` and
+   health-checks `/healthz`. `.python-version` pins Python 3.12.
+2. Fill in the secrets it asks for: `TELEGRAM_BOT_TOKEN`,
+   `TELEGRAM_ALLOWED_USERS`, and `GROQ_API_KEY` and/or `HF_TOKEN`.
+3. Add the pinger. Create a free HTTP monitor on
+   [UptimeRobot](https://uptimerobot.com) or a job on
+   [cron-job.org](https://cron-job.org) that requests
+   `https://<your-service>.onrender.com/healthz` **every 10 minutes**. Without
+   it, Render spins the service down after 15 minutes and the bot stops
+   answering until the next inbound request. Because `/healthz` is `503` when
+   polling has stopped, the monitor's alert also tells you when the bot is down.
+4. Message the bot. Every bundle comes back as a ZIP because the free disk is
+   wiped on every restart or spin-down: the copy in your chat is the one that
+   lasts.
+
+**Recipe C: the paid worker (the upgrade).** On Render, create the Blueprint
+from [`deploy/render-worker.yaml`](deploy/render-worker.yaml) instead (set the
+Blueprint path when you create it): a `worker` on the `0.5c-512mb` instance,
+$7/month, no pinger and no `/healthz` to call. Delete the free web service so
+two bots do not poll the same token (Telegram allows only one poller per token).
+On Koyeb, `bash deploy/koyeb.sh worker` creates the same thing on an eco-nano
+instance for $1.61/month.
+
+**Recipe B: Koyeb, free.** Install the [koyeb CLI](https://www.koyeb.com/docs/build-and-deploy/cli/installation)
+and `koyeb login`, then:
+
+```bash
+bash deploy/koyeb.sh secrets   # stores the token, allowlist and keys as Koyeb secrets
+bash deploy/koyeb.sh free      # free web service from deploy/Dockerfile, health check on /healthz
+```
+
+and point the same 10-minute pinger at `https://<app>-<org>.koyeb.app/healthz`.
+`deploy/Dockerfile` builds the bot image for Koyeb or any Docker host
+(`docker build -f deploy/Dockerfile -t father-agent-bot .`).
+
+**Webhook mode** is shipped but off. Setting `TELEGRAM_WEBHOOK_URL=https://...`
+(and optionally `TELEGRAM_WEBHOOK_SECRET`) makes the bot register
+`<url>/telegram` and receive updates there instead of polling. Polling stays
+the default: a free instance can take a minute to cold-start, which loses a
+webhook delivery, while a poll loop simply reconnects.
 
 ## Use it from smolagents
 
@@ -359,6 +482,10 @@ father_agent/
   delivery.py               interface inference + the static kit: requirements, .env.example,
                             bootstrap.py, Dockerfile, deploy/huggingface, deploy/render
   factory.py                Factory: the six stages + atomic writer
+  bot.py                    the Telegram bot (optional extra): allowlist, queue, ZIP
+                            delivery, /healthz
+  telegram_progress.py      the factory's six-stage feed as one Telegram message edited
+                            in place (a ProgressReporter)
   heuristics.py, templates.py   the offline mock's planning rules and code templates
   interface_templates.py    the offline mock's app.py (Streamlit, FastAPI) and bot.py (aiogram)
   integrations/             smolagents Tool
@@ -366,9 +493,14 @@ father_agent/
                             detector, consent gate, applier, core_manifest.json, ledger
 prompts/                    planner.md, coder_agent.md, coder_tests.md,
                             coder_streamlit.md, coder_fastapi.md, coder_telegram.md
-tests/                      offline test suite (sockets blocked)
+tests/                      offline test suite (sockets blocked); test_bot.py drives the
+                            bot with real Updates and a recording Bot session
 scripts/verify.sh           install + lint + test + end-to-end check (CI runs it as is)
-.github/workflows/ci.yml    CI: ruff, and verify.sh on Python 3.11 and 3.12; no secrets
+.github/workflows/ci.yml    CI: ruff, verify.sh with the bot extra on Python 3.11 and 3.12,
+                            and verify.sh without it; no secrets
+render.yaml                 Recipe A: the bot on Render's free web service (+ a pinger)
+deploy/                     render-worker.yaml (Recipe C), koyeb.sh, Dockerfile for the bot
+requirements-bot.txt        the optional Telegram bot extra (aiogram, aiohttp)
 ```
 
 ## Extending it
@@ -388,14 +520,18 @@ scripts/verify.sh           install + lint + test + end-to-end check (CI runs it
 
 ```bash
 pip install -r requirements-dev.txt
+pip install -r requirements-bot.txt   # optional, a second step: without it tests/test_bot.py skips
 python -m pytest -q
 ruff check .
 bash scripts/verify.sh      # what CI runs, key-free and offline after the install
 ```
 
 CI (`.github/workflows/ci.yml`) runs on every push and pull request: a `lint`
-job (ruff alone) and a `tests` job that runs `scripts/verify.sh` on Python 3.11
-and 3.12. It needs no secrets, so it runs the same on a fork.
+job (ruff alone); a `tests` job that runs `scripts/verify.sh` on Python 3.11
+and 3.12 with the bot extra installed and `FATHER_REQUIRE_BOT=1`, so the
+offline bot suite runs there and a missing aiogram fails instead of skipping;
+and a `core` job that runs the same script without the extra, proving the core
+install does not need it. It needs no secrets, so it runs the same on a fork.
 
 ## Licence
 

@@ -25,7 +25,6 @@ from father_agent.evolution import (
     detect,
     evolve,
     planned_spec,
-    write_manifest,
 )
 from father_agent.evolution.applier import check_target
 from father_agent.evolution.paths import (
@@ -33,8 +32,10 @@ from father_agent.evolution.paths import (
     LEDGER_FILE,
     MANIFEST_FILE,
     PACK_REQUIREMENTS,
+    PACKS_DIR,
     REGISTRY_FILE,
 )
+from father_agent.evolution.pristine import shipped_packs, write_pristine_checkout
 from father_agent.spec import Dependency
 from father_agent.validator import Validator, check_licences, licence_allowed
 
@@ -62,22 +63,11 @@ class FakeTTY(io.StringIO):
 
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
-    """A miniature checkout: the real evolution files plus a few core files, pinned."""
-    fake = tmp_path / "repo"
-    (fake / EVOLUTION_DIR).mkdir(parents=True)
-    for name in ("registry.json", "catalogue.json", "templates", "packs"):
-        src = ROOT / EVOLUTION_DIR / name
-        if src.is_dir():
-            shutil.copytree(src, fake / EVOLUTION_DIR / name,
-                            ignore=shutil.ignore_patterns("__pycache__"))
-        else:
-            shutil.copy2(src, fake / EVOLUTION_DIR / name)
-    for rel in ("main.py", "requirements.txt", "father_agent/cli.py",
-                "father_agent/evolution/applier.py", PACK_REQUIREMENTS):
-        (fake / rel).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / rel, fake / rel)
-    write_manifest(fake)
-    return fake
+    """A miniature checkout of what a fresh clone ships, never this working tree as it is.
+
+    An accepted upgrade rewrites the registry and adds a pack folder; a fixture that
+    inherited that would find no gap, and the tests below would test nothing."""
+    return write_pristine_checkout(tmp_path / "repo")
 
 
 def snapshot(folder: Path, *, skip: tuple[str, ...] = ()) -> dict[str, bytes]:
@@ -102,6 +92,16 @@ def ledger_rows(root: Path) -> list[dict[str, object]]:
 
 
 # --------------------------------------------------------------------------- detection
+
+
+def test_the_miniature_checkout_is_pristine(root: Path) -> None:
+    """The fixture must not inherit a pack this working tree installed, or every test in
+    this module quietly stops testing what it says."""
+    registry = json.loads((root / REGISTRY_FILE).read_text(encoding="utf-8"))
+    assert shipped_packs(registry) == registry["packs"]
+    names = {p["name"] for p in registry["packs"]}
+    assert all(p.name in names for p in (root / PACKS_DIR).iterdir() if p.is_dir())
+    assert detect(KAFKA_TASK, None, EvolutionPaths(root)).found
 
 
 def test_gap_is_detected_before_any_file_is_written(root: Path) -> None:

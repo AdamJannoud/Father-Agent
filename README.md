@@ -308,12 +308,12 @@ proposed upgrade — nothing written yet
          (task mentions "kafka")
   deps   kafka-python >=2.0,<3 · Apache-2.0 · open-source, no account, no key
   writes father_agent/evolution/packs/kafka/** · registry entry · requirements-packs.txt · ledger
-  never  core modules or requirements.txt — manifest 68 files, sha256 pinned
+  never  core modules or requirements.txt — manifest 69 files, sha256 pinned
   gate   ast ok · compile ok · ruff ok · licence ok (checked in memory)
   diff   sha256:cf1584e53711084b63da7fc36d20bb4a98d9c2b1c0e9e56edb345a50cb41d5c3
 apply this upgrade? [y/N] n
   declined — nothing written (answered no).
-core manifest intact (68 files, hashes unchanged)
+core manifest intact (69 files, hashes unchanged)
 ledger ← {"decision": "declined", "pack": "kafka", "ts": "…", "task": "watch a kafka topic and alert on spikes"}
 ```
 

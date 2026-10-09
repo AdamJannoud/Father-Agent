@@ -9,8 +9,9 @@
 # main.py doctor → end-to-end generations into sample_output/: the cli sample,
 # then one per delivery interface (telegram, web/streamlit, web/fastapi, api),
 # each re-validated from disk, plus a deploy dry run, then the self-evolution
-# smoke check: capabilities lists packs, and evolve on a task needing a pack we
-# do not ship proposes it, declines with no terminal, and writes no pack.
+# smoke check: capabilities lists packs, and evolve, run against a scratch
+# checkout of the shipped state, on a task needing a pack we do not ship
+# proposes it, declines with no terminal, and writes no pack.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -116,13 +117,20 @@ say "python main.py capabilities"
   || fail "capabilities did not list the installed packs"
 echo "ok"
 
+# Against a scratch checkout of the shipped state, not this tree: the README
+# documents applying an upgrade in your own checkout, and an installed pack is
+# no longer a gap, so evolve would rightly propose nothing here.
 say "python main.py evolve (no terminal: must propose, decline, write no pack)"
-EVOLVE_OUT="$("$VPY" main.py evolve "watch a kafka topic and alert on spikes" </dev/null)" \
+EVOLVE_ROOT="$(mktemp -d)"
+trap 'rm -rf "$EVOLVE_ROOT"' EXIT
+"$VPY" -c 'import sys, pathlib; from father_agent.evolution.pristine import write_pristine_checkout as write; write(pathlib.Path(sys.argv[1]))' "$EVOLVE_ROOT" \
+  || fail "could not build a pristine evolution checkout"
+EVOLVE_OUT="$(FATHER_EVOLUTION_ROOT="$EVOLVE_ROOT" "$VPY" main.py evolve "watch a kafka topic and alert on spikes" </dev/null)" \
   || fail "evolve exited non-zero"
 printf '%s\n' "$EVOLVE_OUT" | grep -q 'proposed upgrade' || fail "evolve proposed nothing"
 printf '%s\n' "$EVOLVE_OUT" | grep -q '^declined' || fail "evolve did not decline without a terminal"
 printf '%s\n' "$EVOLVE_OUT" | grep -q 'core manifest intact' || fail "core manifest not intact"
-[ ! -e "$ROOT/father_agent/evolution/packs/kafka" ] || fail "evolve wrote a pack without consent"
+[ ! -e "$EVOLVE_ROOT/father_agent/evolution/packs/kafka" ] || fail "evolve wrote a pack without consent"
 "$VPY" -m father_agent.evolution >/dev/null || fail "the core does not match core_manifest.json"
 echo "ok: proposed, declined, nothing written, core manifest intact"
 

@@ -104,3 +104,33 @@ jobs:
         run: python scripts/run_render_build.py
       - name: the bot stack imported at the pinned versions
         run: python -c "import aiohttp, aiogram; assert aiohttp.__version__ == '3.14.4', aiohttp.__version__"
+
+  packaging:
+    name: pip install .[bot] (Python 3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: pip install .[bot]
+        run: python -m pip install --disable-pip-version-check ".[bot]"
+      - name: the installed package, from outside the checkout
+        working-directory: /tmp
+        run: |
+          python - <<'PY'
+          import importlib.resources as r
+          import json
+
+          import aiohttp
+          import father_agent
+          import father_agent.bot
+          import father_agent.delivery
+
+          root = r.files("father_agent") / "evolution"
+          for name in ("registry.json", "catalogue.json", "core_manifest.json"):
+              json.loads((root / name).read_text(encoding="utf-8"))
+          assert aiohttp.__version__ == "3.14.4", aiohttp.__version__
+          print("installed:", father_agent.__file__)
+          PY

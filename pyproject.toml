@@ -1,3 +1,9 @@
+[build-system]
+# Explicit, so `pip install .` behaves the same on every machine instead of
+# falling back to setuptools' legacy backend.
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "father-agent"
 version = "1.0.0"
@@ -6,10 +12,46 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 
+# The core runtime, mirroring requirements.txt. Declared here as well, because
+# `pip install .` and `pip install .[bot]` have to produce a WORKING agent and
+# not just a buildable wheel: with an empty list, `pip install .[bot]` installs
+# the bot stack and none of the core's own imports (httpx, pyyaml, ...), so the
+# container starts and dies on the first import.
+#
+# pydantic is the one entry that is a RANGE, and it has to be. The `bot` extra
+# pins pydantic==2.13.5 because aiogram 3.31.0 caps pydantic below 2.14, while
+# requirements.txt pins 2.14.0 for the core. An exact 2.14.0 here would make
+# `pip install .[bot]` unsatisfiable in a single resolution: pip refuses the
+# install rather than choose between them. The range accepts both, and
+# tests/test_deploy_build.py fails if the two ever stop overlapping.
+dependencies = [
+    "httpx==0.28.1",
+    "pydantic>=2.13.5,<2.15",
+    "python-dotenv==1.2.4",
+    "pyyaml==6.0.3",
+    "ruff==0.16.10",
+    "smolagents==1.26.0",
+]
+
 [project.optional-dependencies]
 # The Telegram bot (python main.py bot); mirrors requirements-bot.txt (aiogram 3.31.0
 # caps pydantic below 2.14).
 bot = ["aiogram==3.31.0", "aiohttp==3.14.4", "pydantic==2.13.5"]
+
+[tool.setuptools.packages.find]
+# This is a flat layout with more than one top-level candidate: father_agent/,
+# deploy/, prompts/, scripts/ and tests/. Setuptools refuses to guess in that
+# case, so `pip install .` dies outright on a fresh clone with
+# "Multiple top-level packages discovered in a flat-layout: ['deploy', 'prompts',
+# 'father_agent']". Name the one real package instead: deploy/ and prompts/ are
+# files the checkout is run from, not importable packages.
+include = ["father_agent*"]
+
+[tool.setuptools.package-data]
+# The evolution module reads these from inside the package, so the wheel has to
+# carry them: registry.json and catalogue.json drive `evolve`, and
+# core_manifest.json is the hash guard the applier re-checks after every write.
+father_agent = ["evolution/*.json", "evolution/packs/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -10,13 +10,33 @@ from __future__ import annotations
 import json
 import keyword
 import re
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from .errors import SpecError
 
-SPEC_VERSION = "1"
+SPEC_VERSION = "2"
+
+#: How a sub-agent reaches its user. ``cli`` is the default and today's shape.
+INTERFACES = ("cli", "web", "telegram", "api")
+#: Frameworks each interface may use; the first is the default.
+FRAMEWORKS: dict[str, tuple[str, ...]] = {
+    "cli": ("argparse",),
+    "web": ("streamlit", "fastapi"),
+    "telegram": ("aiogram",),
+    "api": ("fastapi",),
+}
+#: Hosting targets each interface can be prepared for; docker applies to all.
+DEPLOY_TARGETS: dict[str, tuple[str, ...]] = {
+    "cli": ("docker",),
+    "web": ("docker", "hf-spaces", "render"),
+    "telegram": ("docker", "render"),
+    "api": ("docker", "hf-spaces", "render"),
+}
+_TARGET_ALIASES = {"huggingface": "hf-spaces", "hf": "hf-spaces", "spaces": "hf-spaces",
+                   "hf_spaces": "hf-spaces", "hugging-face": "hf-spaces",
+                   "huggingface-spaces": "hf-spaces", "dockerfile": "docker"}
 
 #: SDKs for paid inference APIs. A generated sub-agent may not depend on them.
 PAID_SDKS = frozenset({"openai", "anthropic", "cohere", "mistralai", "google.generativeai",
@@ -113,6 +133,47 @@ class ClassSpec(BaseModel):
         return value
 
 
+class Delivery(BaseModel):
+    """How the sub-agent is delivered: its interface, framework and hosting targets."""
+
+    interface: Literal["cli", "web", "telegram", "api"] = Field(
+        default="cli", description="cli (default), web dashboard, telegram bot or JSON api")
+    framework: str = Field(default="", description="streamlit or fastapi for web; aiogram "
+                                                   "for telegram; fastapi for api; empty "
+                                                   "for the default")
+    deploy: list[str] = Field(default_factory=list,
+                              description="hosting targets: docker, hf-spaces, render "
+                                          "(empty for every target the interface supports)")
+
+    @model_validator(mode="after")
+    def _resolve(self) -> Delivery:
+        """Fill the default framework and targets, and refuse combinations that cannot work."""
+        allowed = FRAMEWORKS[self.interface]
+        framework = self.framework.strip().lower()
+        if framework in ("", "none", "default") or (self.interface == "cli"
+                                                    and framework in ("cli", "stdlib")):
+            framework = allowed[0]
+        if framework not in allowed:
+            raise ValueError(f"framework {self.framework!r} does not fit interface "
+                             f"{self.interface!r}; choose one of: {', '.join(allowed)}")
+        self.framework = framework
+        targets = DEPLOY_TARGETS[self.interface]
+        wanted = [_TARGET_ALIASES.get(t.strip().lower(), t.strip().lower()) for t in self.deploy]
+        bad = [t for t in wanted if t not in targets]
+        if bad:
+            raise ValueError(f"deploy target(s) {', '.join(bad)} do not fit interface "
+                             f"{self.interface!r}; choose from: {', '.join(targets)}")
+        chosen = set(wanted) or set(targets)
+        chosen.add("docker")
+        self.deploy = [t for t in targets if t in chosen]
+        return self
+
+    @property
+    def label(self) -> str:
+        """``telegram · aiogram`` for progress lines."""
+        return f"{self.interface} · {self.framework}"
+
+
 class SubAgentSpec(BaseModel):
     """Everything the Coder needs to write one sub-agent."""
 
@@ -131,6 +192,7 @@ class SubAgentSpec(BaseModel):
     outputs: list[str] = Field(default_factory=list)
     run_example: str = ""
     notes: list[str] = Field(default_factory=list)
+    delivery: Delivery = Field(default_factory=Delivery)
     planned_by: str = ""
 
     @field_validator("slug")
@@ -156,6 +218,11 @@ class SubAgentSpec(BaseModel):
         if not self.run_example:
             self.run_example = f"python -m subagents.{self.slug}.agent --once"
         return self
+
+    @property
+    def has_delivery_block(self) -> bool:
+        """False for a spec.json written before the delivery layer existed."""
+        return "delivery" in self.model_fields_set
 
     @property
     def import_names(self) -> set[str]:

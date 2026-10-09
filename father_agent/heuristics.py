@@ -14,6 +14,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .delivery import infer_delivery
+
 
 @dataclass(frozen=True)
 class Profile:
@@ -71,16 +73,19 @@ ETH_WORDS = ("ethereum", " eth ", "evm", "erc20", "erc-20", "web3")
 AGENT_NOUNS = ("watcher", "monitor", "tracker", "scraper", "crawler", "bot", "analyzer",
                "analyser", "predictor", "classifier", "notifier", "collector", "fetcher",
                "downloader", "organizer", "organiser", "cleaner", "summarizer", "reporter",
-               "checker", "alerter", "forecaster", "trainer", "poller", "logger", "agent")
+               "checker", "alerter", "forecaster", "trainer", "poller", "logger", "dashboard",
+               "service", "agent")
 
 STOP_WORDS = frozenset("""a an the that which who and or of for to in on at by with from every
 each all any some my our your their this these those is are be it its into as per then
 them they logs log plots plot charts chart build create make write me please new hourly daily
-minutes minute seconds second hours hour days day changes using via when""".split())
+minutes minute seconds second hours hour days day changes using via when telegram streamlit
+fastapi aiogram web""".split())
 
 VERBS = frozenset("""scrape crawl track train watch monitor fetch download collect analyze analyse
 check get poll predict classify organize organise clean summarize summarise report alert
-forecast backup notify read find list""".split())
+forecast backup notify read find list watches tracks monitors fetches scrapes collects
+checks alerts sends dms plots serves exposes shows""".split())
 
 SUFFIX = {"blockchain": "watcher", "scraping": "scraper", "data_ml": "trainer",
           "automation": "organizer", "web_api": "tracker"}
@@ -224,4 +229,5 @@ def plan_spec(command: str) -> dict[str, Any]:
                                                       if wants_plot else []),
         "notes": [f"fetch={profile.fetch}", *( [f"rpc={rpc_flavour}"] if rpc_flavour else []),
                   *([f"task={task}"] if task else [])],
+        "delivery": infer_delivery(command).model_dump(),
     }

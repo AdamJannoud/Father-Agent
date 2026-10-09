@@ -1,11 +1,16 @@
 """The Factory: command in, validated sub-agent folder out.
 
-Five stages, in order, because each needs the one before it::
+Six stages, in order, because each needs the one before it::
 
-    1-2  Planner    command  -> spec (checked against the JSON contract)
-    3    Coder      spec     -> agent.py, test_agent.py (each through the gate)
-    4    Validator  the whole bundle, once more, together
-    5    Writer     subagents/<slug>/ — the only stage that touches the disk
+    1-2  Planner    command  -> spec (checked against the JSON contract),
+                    including its delivery block: interface, framework, hosts
+    3    Coder      spec     -> agent.py, app.py or bot.py, test_agent.py
+                    (each through the gate)
+    4    Validator  the whole bundle, once more, together: nine checks
+    5    Delivery   the static kit: requirements.txt, .env.example, bootstrap.py,
+                    Dockerfile, .dockerignore and one folder per host in deploy/
+                    (rendered before stage 4 so the gate sees it; reported after)
+    6    Writer     subagents/<slug>/ — the only stage that touches the disk
 
 Generated code is never imported or executed by the factory.
 """
@@ -22,6 +27,15 @@ from pathlib import Path
 
 from .coder import Coder
 from .config import PROJECT_ROOT, Config
+from .delivery import (
+    FRAMEWORK_DEPENDENCIES,
+    apply_delivery,
+    choose_delivery,
+    infer_delivery,
+    kit_summary,
+    next_command,
+    render_kit,
+)
 from .errors import FatherAgentError, OutputExistsError, SpecError, ValidationFailedError
 from .logging_setup import ProgressReporter
 from .planner import Planner
@@ -29,11 +43,16 @@ from .prompts import PromptLibrary
 from .providers.chain import ProviderChain, build_chain
 from .spec import SubAgentSpec
 from .templates import render_readme
-from .validator import FileReport, Validator
+from .validator import FileReport, Validator, gate_summary
 
 logger = logging.getLogger(__name__)
 
-BUNDLE_FILES = ("agent.py", "test_agent.py", "README.md", "spec.json")
+#: What a bundle written before the delivery layer holds.
+LEGACY_FILES = ("agent.py", "test_agent.py", "README.md", "spec.json")
+#: Files every bundle holds, whatever its interface (a cli bundle is exactly these).
+BUNDLE_FILES = (*LEGACY_FILES, "requirements.txt", ".env.example", "bootstrap.py",
+                "Dockerfile", ".dockerignore")
+STAGES = 6
 
 
 @dataclass
@@ -88,7 +107,7 @@ class Factory:
         self.reporter.step(stage or "provider", number or None, message)
 
     def _progress(self, stage: str, number: int, message: str) -> None:
-        """Record the current stage and print its progress line."""
+        """Record the current stage and print its progress line (``3/6``)."""
         self._step = (number, stage)
         self.reporter.step(stage, number, message)
 
@@ -106,7 +125,8 @@ class Factory:
 
     async def generate(self, command: str = "", *, output_dir: Path | None = None,
                        force: bool = False, dry_run: bool = False,
-                       spec: SubAgentSpec | None = None) -> GenerationResult:
+                       spec: SubAgentSpec | None = None, interface: str | None = None,
+                       framework: str | None = None) -> GenerationResult:
         """Plan, write, validate and save one sub-agent.
 
         Args:
@@ -115,6 +135,8 @@ class Factory:
             force: Replace an existing sub-agent folder with the same slug.
             dry_run: Stop after planning; nothing is written.
             spec: Re-use an existing spec (from spec.json) instead of planning.
+            interface: Override the interface (cli, web, telegram, api).
+            framework: Override the framework (streamlit, fastapi, aiogram).
 
         Raises:
             FatherAgentError: Any failure, with a message fit for the terminal.
@@ -129,15 +151,20 @@ class Factory:
                 self._progress("spec", 1, f"planning · provider {self.chain.primary.label}")
                 spec, completion = await self.planner.plan(command)
                 providers.append(completion.label)
+                if not spec.has_delivery_block:
+                    # The model said nothing about delivery: read it from the sentence.
+                    spec.delivery = infer_delivery(spec.command)
             else:
                 self._progress("spec", 1, f"re-using spec {spec.slug} (planning skipped)")
+            spec.delivery = choose_delivery(spec.delivery, interface=interface,
+                                            framework=framework)
+            apply_delivery(spec)
             spec.run_example = self.run_example(spec, out_root)
             target = out_root / spec.slug
             if target.exists() and not force and not dry_run:
                 raise OutputExistsError(f"{target} already exists; pass --force to replace it "
                                         f"or change the command")
-            libs = " + ".join(d.package for d in spec.dependencies) or "standard library only"
-            self._progress("spec", 2, f"{spec.slug} · {spec.domain} · {libs}")
+            self._progress("spec", 2, self._plan_line(spec))
             if dry_run:
                 return GenerationResult(spec, target, providers=providers, dry_run=True,
                                         elapsed=time.monotonic() - started)
@@ -146,39 +173,63 @@ class Factory:
             methods = sum(len(c.methods) for c in spec.classes)
             self._progress("code", 3, f"wrote agent.py: {len(spec.classes)} classes, "
                                       f"{methods} methods, docstrings · {agent.lines} lines")
-            tests = await self.coder.write_tests(spec, agent)
-            providers += [agent.provider, tests.provider]
+            providers.append(agent.provider)
+            code = {"agent.py": agent.source}
+            interface_code = None
+            if spec.delivery.interface != "cli":
+                interface_code = await self.coder.write_interface(spec, agent)
+                providers.append(interface_code.provider)
+                code[interface_code.filename] = interface_code.source
+                self._progress("code", 3, f"wrote {interface_code.filename}: "
+                                          f"{spec.delivery.label} · {interface_code.lines} "
+                                          f"lines")
+            tests = await self.coder.write_tests(spec, agent, interface_code)
+            providers.append(tests.provider)
+            code["test_agent.py"] = tests.source
             self._progress("code", 3, f"wrote test_agent.py · {tests.lines} lines")
 
-            bundle = {"agent.py": agent.source, "test_agent.py": tests.source}
-            reports = await self.validator.validate_bundle(bundle, spec)
+            kit = render_kit(spec, code)
+            texts = {
+                **code,
+                "README.md": render_readme(spec, provider_label=agent.provider),
+                "spec.json": self._spec_json(spec),
+                **kit,
+            }
+            reports = await self.validator.validate_bundle(texts, spec)
             failed = [r for r in reports if not r.ok]
             if failed:
                 problems = [f"{r.filename}: {p}" for r in failed for p in r.problems]
                 raise ValidationFailedError(
                     "the bundle failed the validator gate; nothing was written:\n  - "
                     + "\n  - ".join(problems), filename=failed[0].filename, problems=problems)
-            self._progress("validate", 4, f"{reports[0].summary} · nothing was executed")
+            labels = gate_summary(reports).split(" · ")
+            self._progress("validate", 4, " · ".join(labels[:5]))
+            self._progress("validate", 4, " · ".join([*labels[5:], "nothing was executed"]))
+            self._progress("delivery", 5, kit_summary(kit))
 
-            label = agent.provider
-            texts = {
-                "agent.py": agent.source,
-                "test_agent.py": tests.source,
-                "README.md": render_readme(spec, provider_label=label),
-                "spec.json": self._spec_json(spec),
-            }
             files = self._write(target, texts, force=force)
-            self._progress("write", 5, f"{self._display(target)}/ · "
-                                       f"{' · '.join(BUNDLE_FILES)}")
-            self.reporter.note(f"next: {spec.run_example}")
+            self._progress("write", 6, f"{self._display(target)}/ · {len(files)} files")
+            self.reporter.note(f"next: {next_command(spec, self._display(target))}")
             elapsed = time.monotonic() - started
-            logger.info("generated %s in %.1fs via %s", spec.slug, elapsed, ", ".join(providers))
+            logger.info("generated %s (%s) in %.1fs via %s", spec.slug, spec.delivery.label,
+                        elapsed, ", ".join(providers))
             return GenerationResult(spec, target, files, reports, providers, False, elapsed)
         except FatherAgentError:
             raise
         except Exception as exc:  # noqa: BLE001 - every failure leaves as a FatherAgentError
             logger.exception("generation crashed")
             raise FatherAgentError(f"generation failed unexpectedly: {exc}") from exc
+
+    @staticmethod
+    def _plan_line(spec: SubAgentSpec) -> str:
+        """``wallet_alert_bot · blockchain · interface telegram · aiogram · httpx``."""
+        framework_packages = {p for pkgs in FRAMEWORK_DEPENDENCIES.values() for p, _ in pkgs}
+        if spec.delivery.interface == "cli":
+            libs = [d.package for d in spec.dependencies]
+            return f"{spec.slug} · {spec.domain} · {' + '.join(libs) or 'standard library only'}"
+        core = [d.package for d in spec.dependencies if d.package not in framework_packages]
+        return (f"{spec.slug} · {spec.domain} · interface {spec.delivery.label} · "
+                f"{' + '.join(core) or 'standard library only'}")
 
     @staticmethod
     def _display(path: Path) -> str:
@@ -212,7 +263,9 @@ class Factory:
             parent.mkdir(parents=True, exist_ok=True)
             staging.mkdir()
             for name, text in texts.items():
-                (staging / name).write_text(text, encoding="utf-8")
+                path = staging / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
             if target.exists():
                 if not force:
                     raise OutputExistsError(f"{target} already exists; pass --force")

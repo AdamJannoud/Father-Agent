@@ -33,7 +33,7 @@ VPY="$VENV/bin/python"
 STAMP="$VENV/.father-requirements.sha256"
 WANT="$(cat requirements.txt requirements-dev.txt | sha256sum | cut -d' ' -f1)"
 if [ "$(cat "$STAMP" 2>/dev/null || true)" = "$WANT" ] \
-   && "$VPY" -c 'import httpx, pydantic, dotenv, pytest' 2>/dev/null; then
+   && "$VPY" -c 'import httpx, pydantic, dotenv, yaml, pytest' 2>/dev/null; then
   say "dependencies already installed (requirements unchanged)"
 else
   say "installing requirements-dev.txt"
@@ -41,7 +41,7 @@ else
        -r requirements-dev.txt; then
     echo "$WANT" > "$STAMP"
   else
-    "$VPY" -c 'import httpx, pydantic, dotenv, pytest' 2>/dev/null \
+    "$VPY" -c 'import httpx, pydantic, dotenv, yaml, pytest' 2>/dev/null \
       || fail "pip install failed and the dependencies are not installed (offline?)"
     say "pip install failed (offline?) but the core dependencies are present; continuing"
   fi

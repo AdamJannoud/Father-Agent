@@ -14,6 +14,7 @@ import textwrap
 from string import Template
 
 from .heuristics import DEFAULT_PROFILE, PROFILES, Profile, choose_profile
+from .interface_templates import render_interface, render_interface_tests
 from .spec import SubAgentSpec
 
 # --------------------------------------------------------------------------- #
@@ -694,14 +695,100 @@ def render_tests(spec: SubAgentSpec) -> str:
     values = layout.values()
     skips = "".join(f'\npytest.importorskip("{m}")' for m in layout.third_party_modules)
     values["skips"] = skips + ("\n" if skips else "")
-    return _TESTS.substitute(values)
+    return _TESTS.substitute(values) + render_interface_tests(spec, values)
+
+
+def render_interface_file(spec: SubAgentSpec) -> str:
+    """Render the interface file (``app.py`` or ``bot.py``) for a non-cli spec."""
+    return render_interface(spec, _Layout(spec).values())
+
+
+def _run_section(spec: SubAgentSpec) -> str:
+    """The README's "Run it" section for the spec's interface."""
+    delivery = spec.delivery
+    if delivery.interface == "cli":
+        return textwrap.dedent(f"""\
+            From the repository root:
+
+            ```bash
+            pip install -r subagents/{spec.slug}/requirements.txt
+            {spec.run_example}          # one cycle, then exit
+            {spec.run_example.replace(' --once', '')}   # keep running
+            ```""")
+    setup = textwrap.dedent("""\
+        From this folder:
+
+        ```bash
+        pip install -r requirements.txt      # or: python bootstrap.py --auto-install
+        cp .env.example .env                 # then fill in what you need
+        """)
+    if delivery.framework == "streamlit":
+        return setup + textwrap.dedent("""\
+            streamlit run app.py                 # http://localhost:8501
+            ```
+
+            Every visit and every **Fetch now** runs one agent cycle; the chart and the
+            table read the stored history. `python agent.py` keeps it collecting on its
+            own schedule.""")
+    if delivery.framework == "fastapi":
+        page = "`GET /` (the dashboard page), " if delivery.interface == "web" else ""
+        return setup + textwrap.dedent(f"""\
+            python app.py                        # http://localhost:8000  (docs at /docs)
+            ```
+
+            Endpoints: {page}`GET /health`, `POST /run` (one agent cycle), `GET /history`,
+            `GET /latest`. Set `{spec.slug.upper()}_AUTORUN=1` to also run the agent on its
+            schedule in the background.""")
+    return setup + textwrap.dedent("""\
+        python bot.py --dry-run              # proves the handlers: no token, no network
+        python scripts/setup_bot.py          # checks BOT_TOKEN (getMe), registers /commands
+        python bot.py                        # long polling: runs on your laptop
+        ```
+
+        Get a token from [@BotFather](https://t.me/BotFather) (`/newbot`) and put it in
+        `.env` as `BOT_TOKEN`. Send the bot `/start` to subscribe a chat; it messages you
+        whenever the agent stores a new reading, and `/status` and `/check` answer on demand.
+        `ALLOWED_USER_IDS` limits who may talk to it.""")
+
+
+def _deploy_section(spec: SubAgentSpec) -> str:
+    """The README's "Deploy" section: Docker always, plus each prepared host."""
+    image = spec.slug.replace("_", "-")
+    port = {"streamlit": 8501, "fastapi": 8000}.get(spec.delivery.framework)
+    publish = f" -p {port}:{port}" if port else ""
+    parts = [textwrap.dedent(f"""\
+        **Docker** (`Dockerfile`, python:3.12-slim, non-root):
+
+        ```bash
+        docker build -t {image} .
+        docker run --rm --env-file .env{publish} {image}
+        ```""")]
+    if "hf-spaces" in spec.delivery.deploy:
+        parts.append(textwrap.dedent("""\
+            **Hugging Face Spaces** (`deploy/huggingface/`): a complete Space using the
+            Docker SDK on port 7860. Push that folder as the Space's repository; its
+            README has the exact commands. Set your variables under the Space's
+            *Settings → Variables and secrets*."""))
+    if "render" in spec.delivery.deploy:
+        hook = (" The bot runs in webhook mode there (`python bot.py --webhook`); Render "
+                "sets `RENDER_EXTERNAL_URL` and the blueprint generates `WEBHOOK_SECRET`."
+                if spec.delivery.interface == "telegram" else "")
+        parts.append(textwrap.dedent(f"""\
+            **Render** (`deploy/render/`): a Blueprint for one free web service. Push that
+            folder as its own repository, then *New → Blueprint* on
+            <https://dashboard.render.com>.{hook} Free services sleep when idle, so a
+            schedule only runs while the service is awake."""))
+    parts.append(f"`python main.py deploy {spec.slug} --target <target>` (from the Father "
+                 f"Agent's folder) refreshes a target's folder from these files and prints "
+                 f"its exact commands. The factory prepares a deploy; it never pushes one "
+                 f"and never holds a token.")
+    return "\n\n".join(parts)
 
 
 def render_readme(spec: SubAgentSpec, *, provider_label: str = "") -> str:
     """Render the sub-agent's README.md from its spec."""
     deps = "\n".join(f"- `{d.package}` — {d.purpose or 'runtime dependency'}"
                      for d in spec.dependencies) or "- none beyond the standard library"
-    pip_line = " ".join(d.package for d in spec.dependencies)
     env_rows = "\n".join(
         f"| `{e.name}` | {'yes' if e.required else 'no'} | {e.purpose} |" for e in spec.env_vars
     ) or "| — | — | no environment variables |"
@@ -713,8 +800,9 @@ def render_readme(spec: SubAgentSpec, *, provider_label: str = "") -> str:
                 if keys else "It needs no API key; every setting has a default.")
     schedule = (f"every {spec.schedule_seconds} seconds" if spec.schedule_seconds
                 else "on demand")
-    install = f"pip install {pip_line}\n" if pip_line else ""
     origin = f" using `{provider_label}`" if provider_label else ""
+    interface = (f"interface: **{spec.delivery.interface}** "
+                 f"({spec.delivery.framework})")
     return textwrap.dedent(f"""\
         # {spec.name}
 
@@ -724,24 +812,30 @@ def render_readme(spec: SubAgentSpec, *, provider_label: str = "") -> str:
 
         > {spec.command}
 
-        Domain: **{spec.domain}** · schedule: **{schedule}** · {key_line}
+        Domain: **{spec.domain}** · {interface} · schedule: **{schedule}** · {key_line}
 
         ## Run it
 
-        From the repository root:
+        {{run}}
 
-        ```bash
-        {install}{spec.run_example}          # one cycle, then exit
-        {spec.run_example.replace(' --once', '')}   # keep running
-        ```
+        ## Deploy
+
+        {{deploy}}
 
         ## Configuration
+
+        Copy `.env.example` to `.env` and fill it in; `.env` is never committed and
+        never copied into the image.
 
         | Variable | Required | Purpose |
         | --- | --- | --- |
         {{env_rows}}
 
-        ## Libraries
+        ## Dependencies
+
+        `requirements.txt` is generated from the spec and pinned. `python bootstrap.py`
+        reports anything missing and installs it only with `--auto-install` (or
+        `FATHER_AUTO_INSTALL=1`), and only the packages listed there.
 
         {{deps}}
 
@@ -757,7 +851,8 @@ def render_readme(spec: SubAgentSpec, *, provider_label: str = "") -> str:
 
         The tests use a fake data source: no network, no key.
 
-        The Father Agent validated this code (ast, py_compile, ruff, imports) but
-        never executed it. Read it before you run it; it is yours to change.
-        """).replace("{env_rows}", env_rows).replace("{deps}", deps) \
-        .replace("{classes}", classes)
+        The Father Agent validated this code (ast, py_compile, ruff, imports, bundle,
+        deploy, secrets) but never executed it. Read it before you run it; it is yours
+        to change.
+        """).replace("{run}", _run_section(spec)).replace("{deploy}", _deploy_section(spec)) \
+        .replace("{env_rows}", env_rows).replace("{deps}", deps).replace("{classes}", classes)

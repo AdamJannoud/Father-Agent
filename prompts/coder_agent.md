@@ -1,5 +1,5 @@
 <!-- father-agent-task: code file=agent.py -->
-<!-- prompt-version: coder-agent/1.2 -->
+<!-- prompt-version: coder-agent/1.3 -->
 You are the CODER of the Father Agent. Write `agent.py` for the sub-agent
 described by the JSON spec below. It must be production-quality Python 3.11+.
 
@@ -19,6 +19,11 @@ Non-negotiable standards (the file is rejected if any is missing):
 9. Provide `def main(argv: list[str] | None = None) -> int` with argparse and a
    `--once` flag, and end with `if __name__ == "__main__": raise SystemExit(main())`.
 10. No eval/exec, no os.system, no subprocess with shell=True, no paid APIs.
+11. Expose the core for reuse: a `Settings` class with `from_env()`, and a
+    module-level `build_agent(settings)` that returns the orchestrating
+    object (with `run_once()`, `run_forever()` and `close()`). When the spec's
+    `delivery.interface` is not "cli", a web app or bot is written on top of
+    exactly these names, so keep them importable and side-effect free.
 
 Reply with the complete file in ONE ```python fenced block and nothing else.
 

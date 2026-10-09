@@ -2,5 +2,6 @@
 httpx==0.28.1          # async HTTPS client for the free OpenAI-compatible endpoints
 pydantic==2.14.0       # the JSON contract between planner and coder
 python-dotenv==1.2.4   # reads your keys from .env
+pyyaml==6.0.3          # parses the host manifests the deploy check reads
 ruff==0.16.10          # lint step of the validator gate
 smolagents==1.26.0     # optional framework integration (father_agent.integrations)

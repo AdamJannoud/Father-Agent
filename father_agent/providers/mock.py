@@ -16,7 +16,7 @@ import re
 from ..errors import ProviderError
 from ..heuristics import plan_spec
 from ..spec import SubAgentSpec
-from ..templates import render_agent, render_tests
+from ..templates import render_agent, render_interface_file, render_tests
 from .base import Completion, Message, Provider
 
 logger = logging.getLogger(__name__)
@@ -74,5 +74,7 @@ class MockProvider(Provider):
                 return "```python\n" + render_agent(spec) + "```"
             if filename == "test_agent.py":
                 return "```python\n" + render_tests(spec) + "```"
+            if filename in ("app.py", "bot.py"):
+                return "```python\n" + render_interface_file(spec) + "```"
             raise ValueError(f"unknown file {filename!r}")
         raise ValueError(f"unknown task {task!r}")

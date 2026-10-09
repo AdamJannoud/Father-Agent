@@ -19,7 +19,8 @@ from .errors import ConfigError
 logger = logging.getLogger(__name__)
 
 PROMPT_FILES = {"planner": "planner.md", "coder_agent": "coder_agent.md",
-                "coder_tests": "coder_tests.md"}
+                "coder_tests": "coder_tests.md", "coder_streamlit": "coder_streamlit.md",
+                "coder_fastapi": "coder_fastapi.md", "coder_telegram": "coder_telegram.md"}
 _VERSION_RE = re.compile(r"<!--\s*prompt-version:\s*([^\s]+)\s*-->")
 _TASK_RE = re.compile(r"<!--\s*father-agent-task:\s*(.+?)\s*-->")
 

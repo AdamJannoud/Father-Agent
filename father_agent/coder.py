@@ -11,6 +11,7 @@ import logging
 import re
 from dataclasses import dataclass
 
+from .delivery import interface_file
 from .errors import ValidationFailedError
 from .prompts import PromptLibrary
 from .providers.chain import ProviderChain
@@ -18,6 +19,10 @@ from .spec import SubAgentSpec
 from .validator import FileReport, Validator
 
 logger = logging.getLogger(__name__)
+
+#: Coder prompt for each interface framework's file.
+INTERFACE_PROMPTS = {"streamlit": "coder_streamlit", "fastapi": "coder_fastapi",
+                     "aiogram": "coder_telegram"}
 
 _FENCE_RE = re.compile(r"```(?:python|py)?[ \t]*\n(.*?)```", re.S)
 
@@ -73,10 +78,27 @@ class Coder:
         """Generate and validate ``agent.py``."""
         return await self._generate("coder_agent", "agent.py", spec, {})
 
-    async def write_tests(self, spec: SubAgentSpec, agent: GeneratedFile) -> GeneratedFile:
-        """Generate and validate ``test_agent.py`` against the finished agent."""
-        return await self._generate("coder_tests", "test_agent.py", spec,
-                                    {"agent.py": agent.source}, agent_code=agent.source)
+    async def write_interface(self, spec: SubAgentSpec, agent: GeneratedFile) -> GeneratedFile:
+        """Generate and validate ``app.py`` or ``bot.py`` over the finished agent."""
+        filename = interface_file(spec)
+        if filename is None:
+            raise ValueError("a cli sub-agent has no interface file")
+        prompt_key = INTERFACE_PROMPTS[spec.delivery.framework]
+        return await self._generate(prompt_key, filename, spec, {"agent.py": agent.source},
+                                    agent_code=agent.source)
+
+    async def write_tests(self, spec: SubAgentSpec, agent: GeneratedFile,
+                          interface: GeneratedFile | None = None) -> GeneratedFile:
+        """Generate and validate ``test_agent.py`` against the finished agent (and interface)."""
+        siblings = {"agent.py": agent.source}
+        note = ""
+        if interface is not None:
+            siblings[interface.filename] = interface.source
+            note = (f"\n{interface.filename} (the {spec.delivery.label} interface; add tests "
+                    f"for it too, each starting with pytest.importorskip of its framework):\n"
+                    f"<interface_py>\n{interface.source}</interface_py>\n")
+        return await self._generate("coder_tests", "test_agent.py", spec, siblings,
+                                    agent_code=agent.source, interface_code=note)
 
     async def _generate(self, prompt_key: str, filename: str, spec: SubAgentSpec,
                         siblings: dict[str, str], **values: str) -> GeneratedFile:

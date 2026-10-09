@@ -4,7 +4,7 @@ Two destinations:
 
 * ``logs/father-agent.log`` — every step, at DEBUG or the configured level,
   rotated so it never grows without bound.
-* the terminal — the short ``father <stage> n/5 ...`` progress lines on stdout
+* the terminal — the short ``father <stage> n/6 ...`` progress lines on stdout
   (logger ``father.progress``) and warnings/errors on stderr.
 
 A redaction filter strips configured API keys from every record before it is
@@ -48,14 +48,14 @@ class RedactingFilter(logging.Filter):
 
 
 class _ProgressFormatter(logging.Formatter):
-    """Format progress records as ``father <stage> <step>/5 <message>``."""
+    """Format progress records as ``father <stage> <step>/6 <message>``."""
 
     def format(self, record: logging.LogRecord) -> str:
         """Render the stage columns when present, else the bare message."""
         stage = getattr(record, "stage", "")
         step = getattr(record, "step", "")
         if stage:
-            prefix = f"father {stage:<9}{step + '/5' if step else '':<5}"
+            prefix = f"father {stage:<9}{step + '/6' if step else '':<5}"
             return f"{prefix}{record.getMessage()}"
         return record.getMessage()
 
@@ -151,7 +151,7 @@ def setup_logging(config: Config, *, verbose: bool = False, quiet: bool = False)
 
 
 class ProgressReporter:
-    """Emit the five-stage progress lines (spec, code, validate, write)."""
+    """Emit the six-stage progress lines (spec, code, validate, delivery, write)."""
 
     def __init__(self) -> None:
         """Bind to the progress logger."""

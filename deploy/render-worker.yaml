@@ -13,7 +13,11 @@ services:
     runtime: python
     plan: 0.5c-512mb
     region: frankfurt
-    buildCommand: pip install -r requirements.txt && pip install -r requirements-bot.txt
+    # Identical to render.yaml's buildCommand (tests/test_deploy_build.py holds
+    # them equal): --only-binary stops pip falling back to compiling aiohttp's C
+    # stack from an sdist, so a missing wheel fails loudly instead. The
+    # interpreter comes from .python-version (3.12).
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt && pip install --only-binary=aiohttp,multidict,yarl,frozenlist,aiosignal,propcache -r requirements-bot.txt
     startCommand: python main.py bot
     autoDeployTrigger: "off"
     envVars:

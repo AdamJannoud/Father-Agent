@@ -6,8 +6,11 @@
 # (FATHER_REQUIRE_BOT=1), so the offline bot suite runs on 3.11 and 3.12 and a
 # missing aiogram fails instead of skipping. `core` runs the same verify.sh
 # WITHOUT the extra, proving a core-only install is unharmed. `lint` runs ruff
-# alone so a lint failure reads differently from a test failure. No secrets,
-# no keys, no network beyond pip install: it runs the same on a fork.
+# alone so a lint failure reads differently from a test failure. `render-build`
+# runs render.yaml's buildCommand verbatim on 3.12 (scripts/run_render_build.py)
+# and checks the bot stack imported at its pins, so a deploy that would compile
+# aiohttp from source fails here first. No secrets, no keys, no network beyond
+# pip install: it runs the same on a fork.
 name: ci
 
 on:
@@ -85,3 +88,19 @@ jobs:
       - name: aiogram is absent, so the bot suite skipped rather than ran
         run: |
           ! .venv/bin/python -c 'import aiogram'
+
+  render-build:
+    name: render build command (Python 3.12, verbatim)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install pyyaml (to read render.yaml)
+        run: python -m pip install --disable-pip-version-check pyyaml
+      - name: python scripts/run_render_build.py (services[0].buildCommand, as Render runs it)
+        run: python scripts/run_render_build.py
+      - name: the bot stack imported at the pinned versions
+        run: python -c "import aiohttp, aiogram; assert aiohttp.__version__ == '3.14.4', aiohttp.__version__"

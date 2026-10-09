@@ -382,6 +382,15 @@ koyeb.com/docs/reference/instances, read 2026-10-09.
    wiped on every restart or spin-down: the copy in your chat is the one that
    lasts.
 
+If a Render deploy ever tries to build `aiohttp` from source (`'PyLongObject' has no
+member named 'ob_digit'`, then `Failed building wheel for aiohttp`), an old aiohttp
+is resolving: releases below 3.9 predate Python 3.12. The build command's
+`--only-binary` guard refuses the source build and fails at the install step
+instead. The fix is to keep `aiohttp==3.14.4` pinned exactly in
+`requirements-bot.txt`; it ships a prebuilt wheel for 3.12. CI runs the deployed
+build command verbatim on 3.12 (the `render-build` job), so a widened pin fails there
+first.
+
 **Recipe C: the paid worker (the upgrade).** On Render, create the Blueprint
 from [`deploy/render-worker.yaml`](deploy/render-worker.yaml) instead (set the
 Blueprint path when you create it): a `worker` on the `0.5c-512mb` instance,

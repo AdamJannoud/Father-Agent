@@ -5,6 +5,12 @@
 # Two steps because aiogram 3.31.0 requires pydantic<2.14 while the core pins
 # 2.14.0; this file moves pydantic to the newest release aiogram supports, and
 # the whole suite runs on it in CI (the core-only job keeps 2.14.0).
+#
+# aiohttp is pinned exactly, on purpose. 3.14.4 ships manylinux wheels for
+# cp310-cp315, so pip never compiles it. Releases below 3.9 predate Python 3.12
+# support and compile C that touches PyLongObject.ob_digit, which 3.12 removed:
+# that is the "Failed building wheel for aiohttp" deploy error. Do not widen
+# this pin to a range that can resolve below 3.9 (tests/test_deploy_build.py).
 aiogram==3.31.0        # Telegram Bot API client: polling, dispatcher, middlewares
 aiohttp==3.14.4        # the /healthz server (aiogram's own HTTP client, pinned here)
 pydantic==2.13.5       # aiogram 3.31.0: pydantic>=2.4.1,<2.14

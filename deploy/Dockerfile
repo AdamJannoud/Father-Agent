@@ -10,7 +10,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY requirements.txt requirements-bot.txt ./
 # Two steps: aiogram 3.31.0 caps pydantic below the core's pin (see requirements-bot.txt).
-RUN pip install -r requirements.txt && pip install -r requirements-bot.txt
+# --only-binary: aiohttp's C stack comes from wheels or the build fails, never compiled
+# from an sdist (the same guard as render.yaml).
+RUN pip install -r requirements.txt \
+ && pip install --only-binary=aiohttp,multidict,yarl,frozenlist,aiosignal,propcache \
+      -r requirements-bot.txt
 
 COPY . .
 RUN useradd --create-home father && chown -R father /app

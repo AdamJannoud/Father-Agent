@@ -21,7 +21,13 @@ services:
     runtime: python
     plan: free
     region: frankfurt
-    buildCommand: pip install -r requirements.txt && pip install -r requirements-bot.txt
+    # Two pip steps, because the two files pin different pydantics. The
+    # --only-binary list is what stops pip falling back to building aiohttp's C
+    # stack from an sdist: a wheel that is missing now fails the build loudly
+    # instead of compiling with an incompatible toolchain. .python-version
+    # (3.12) selects the interpreter. CI runs this exact line
+    # (scripts/run_render_build.py), so it cannot drift.
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt && pip install --only-binary=aiohttp,multidict,yarl,frozenlist,aiosignal,propcache -r requirements-bot.txt
     startCommand: python main.py bot
     healthCheckPath: /healthz
     # off: a later push to this public repository cannot redeploy your bot behind

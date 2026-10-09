@@ -72,3 +72,19 @@ def test_new_without_text_is_usage_error(capsys: pytest.CaptureFixture[str]) -> 
 def test_providers_lists_chain(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["providers"]) == 0
     assert "active chain: mock/offline-templates" in capsys.readouterr().out
+
+
+def test_bot_module_entry_without_the_extra_gives_the_install_hint() -> None:
+    """``python -m father_agent.bot`` on a core-only install: the CLI's hint, no traceback."""
+    block = "import sys; sys.modules['aiogram'] = None; import runpy; sys.argv[1:] = ['--check']; "
+    runs = {
+        "module": block + "runpy.run_module('father_agent.bot', run_name='__main__')",
+        "script": block.replace("['--check']", "['bot', '--check']")
+                  + "runpy.run_path('main.py', run_name='__main__')",
+    }
+    procs = {name: subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True,
+                                  text=True, timeout=60) for name, code in runs.items()}
+    module, script = procs["module"], procs["script"]
+    assert module.returncode == script.returncode == 2
+    assert "requirements-bot.txt" in module.stderr and "Traceback" not in module.stderr
+    assert module.stderr == script.stderr

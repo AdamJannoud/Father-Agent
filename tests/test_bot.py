@@ -16,6 +16,8 @@ import io
 import itertools
 import logging
 import os
+import subprocess
+import sys
 import zipfile
 from datetime import datetime
 from html.parser import HTMLParser
@@ -52,7 +54,7 @@ from father_agent.providers import MockProvider, ProviderChain
 from father_agent.providers.base import Completion
 from father_agent.telegram_progress import TelegramProgress
 
-from .conftest import SAMPLE_COMMAND
+from .conftest import ROOT, SAMPLE_COMMAND
 
 OWNER = 318668971
 FRIEND = 42
@@ -492,3 +494,28 @@ def test_cli_bot_check_prints_masked_settings(monkeypatch: pytest.MonkeyPatch,
     text = capsys.readouterr().out
     assert "nothing was contacted" in text and str(OWNER) in text
     assert TOKEN not in text and "GET /healthz on port 8080" in text
+
+
+def _entry(args: list[str], **env: str) -> subprocess.CompletedProcess[str]:
+    """Run one entry point in a fresh interpreter; the env is the conftest-scrubbed one."""
+    return subprocess.run([sys.executable, *args], cwd=ROOT, capture_output=True, text=True,
+                          timeout=60, env={**os.environ, **env})
+
+
+@pytest.mark.parametrize("flags", [[], ["--check"]], ids=["run", "check"])
+def test_module_entry_without_a_token_fails_like_main_py(flags: list[str]) -> None:
+    module = _entry(["-m", "father_agent.bot", *flags])
+    script = _entry(["main.py", "bot", *flags])
+    assert module.returncode == script.returncode == 2
+    assert "configuration error: TELEGRAM_BOT_TOKEN is not set" in module.stderr
+    assert "Traceback" not in module.stderr and module.stdout == ""
+    assert (module.stdout, module.stderr) == (script.stdout, script.stderr)
+
+
+def test_module_entry_check_matches_main_py() -> None:
+    env = {"TELEGRAM_BOT_TOKEN": TOKEN, "TELEGRAM_ALLOWED_USERS": str(OWNER)}
+    module = _entry(["-m", "father_agent.bot", "--check"], **env)
+    script = _entry(["main.py", "bot", "--check"], **env)
+    assert module.returncode == script.returncode == 0
+    assert "nothing was contacted" in module.stdout and TOKEN not in module.stdout
+    assert (module.stdout, module.stderr) == (script.stdout, script.stderr)

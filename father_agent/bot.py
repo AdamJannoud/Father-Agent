@@ -1,7 +1,7 @@
 """The Father Agent in Telegram: one line in, a validated sub-agent back as a ZIP.
 
     pip install -r requirements-bot.txt
-    python main.py bot
+    python main.py bot            # or: python -m father_agent.bot
 
 One process holds everything: the aiogram 3 polling loop (outbound to
 Telegram), an aiohttp server on ``$PORT`` whose ``GET /healthz`` says whether
@@ -17,7 +17,8 @@ Generated code is never executed here either; the bundle is zipped from the
 files the factory wrote after the gate passed.
 
 aiogram is an optional extra. Nothing in the core imports this module; the CLI
-imports it only for ``python main.py bot``.
+imports it only for ``python main.py bot``, and ``python -m father_agent.bot``
+is that same command (see :func:`main`).
 """
 
 from __future__ import annotations
@@ -37,6 +38,23 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+
+def main(argv: list[str] | None = None) -> int:
+    """``python -m father_agent.bot [--check] [-p PROVIDER]``: the CLI's ``bot`` command.
+
+    Delegates to :func:`father_agent.cli.main` so both entry points share one
+    dispatcher: same ``--check``, same configuration errors, same exit codes.
+    Defined above the aiogram imports so that, under ``-m``, it runs before
+    them and a core-only install gets the CLI's install hint, not a traceback.
+    """
+    from .cli import main as cli_main
+
+    return cli_main(["bot", *(sys.argv[1:] if argv is None else argv)])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties

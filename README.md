@@ -215,7 +215,7 @@ hold one that writes good code), but any llama.cpp / OpenAI-compatible server on
 | `python main.py evolve "<task>"` | detect a missing capability and propose an additive upgrade, without generating anything; asks `[y/N]` |
 | `  --yes` | approve without a prompt (scripted use); still declined when `CI=true` |
 | `  --log` | print the evolution ledger |
-| `python main.py bot` | serve the factory as a Telegram bot (optional extra: `pip install -r requirements-bot.txt`); see [Run it in Telegram](#run-it-in-telegram) |
+| `python main.py bot` (or `python -m father_agent.bot`) | serve the factory as a Telegram bot (optional extra: `pip install -r requirements-bot.txt`); same flags, output and exit codes either way; see [Run it in Telegram](#run-it-in-telegram) |
 | `  --check` | check the bot settings offline and exit; contacts nothing |
 | `python main.py providers [--check]` | show the provider chain and key status |
 | `python main.py doctor [--online]` | check Python, config, providers, prompts, ruff, paths |
@@ -322,7 +322,7 @@ pip install -r requirements-bot.txt    # after the core install; moves pydantic 
 #   TELEGRAM_BOT_TOKEN=123456789:AA...
 #   TELEGRAM_ALLOWED_USERS=            # leave empty for now
 python main.py bot --check             # offline: prints the settings, token masked
-python main.py bot
+python main.py bot                     # or, identically: python -m father_agent.bot
 ```
 
 Send the bot anything: it answers **Not allowed** with your numeric id. Put that

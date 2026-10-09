@@ -1,0 +1,24 @@
+# Secrets: keys live in .env and never reach git.
+.env
+.env.*
+!.env.example
+
+# Runtime output
+logs/
+subagents/
+sample_output/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Bolter workspace
+.bolter/
+.bolter-task.md

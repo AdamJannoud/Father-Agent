@@ -1,5 +1,8 @@
 # Recipe A (the default): the Father Agent's Telegram bot on Render's FREE web
-# service, kept awake by a pinger. Render → New → Blueprint → this repository.
+# service, kept awake by a pinger. One click:
+#   https://render.com/deploy?repo=https://github.com/AdamJannoud/Father-Agent
+# (or Render → New → Blueprint → this repository). The sync:false values below
+# are typed into Render's own form at creation, never into a chat or a commit.
 #
 # Why a web service and not a worker: Render has no free background worker, and
 # a free web service spins down after 15 minutes without INBOUND traffic. A
@@ -21,7 +24,9 @@ services:
     buildCommand: pip install -r requirements.txt && pip install -r requirements-bot.txt
     startCommand: python main.py bot
     healthCheckPath: /healthz
-    autoDeploy: true
+    # off: a later push to this public repository cannot redeploy your bot behind
+    # your back. Flip it to On Commit in the dashboard when you want that.
+    autoDeployTrigger: "off"
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
@@ -29,7 +34,8 @@ services:
         sync: false
       - key: GROQ_API_KEY
         sync: false
-      - key: HF_TOKEN
-        sync: false
+      # HF_TOKEN is deliberately not listed: it is optional. Groq alone is enough,
+      # and with no key at all the factory runs on the offline mock provider. Add
+      # it in the dashboard later for Hugging Face as the fallback provider.
       - key: FATHER_LOG_LEVEL
         value: INFO

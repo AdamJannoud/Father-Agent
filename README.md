@@ -355,12 +355,18 @@ koyeb.com/docs/reference/instances, read 2026-10-09.
 
 **Recipe A: Render, free (the default).**
 
-1. Push this repository to GitHub. In Render: **New → Blueprint**, pick the
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/AdamJannoud/Father-Agent)
+
+1. Push this repository to GitHub (this one is already public), then open the
+   button above. Or by hand: in Render **New → Blueprint**, pick the
    repository. Render reads [`render.yaml`](render.yaml): a free Python web
    service that installs `requirements.txt` then `requirements-bot.txt`, starts `python main.py bot` and
    health-checks `/healthz`. `.python-version` pins Python 3.12.
 2. Fill in the secrets it asks for: `TELEGRAM_BOT_TOKEN`,
-   `TELEGRAM_ALLOWED_USERS`, and `GROQ_API_KEY` and/or `HF_TOKEN`.
+   `TELEGRAM_ALLOWED_USERS`, and `GROQ_API_KEY`. You type these into Render's own
+   form and they are stored as secrets there. `HF_TOKEN` is optional and not
+   listed: add it in the dashboard later if you want Hugging Face as the
+   fallback provider.
 3. Add the pinger. Create a free HTTP monitor on
    [UptimeRobot](https://uptimerobot.com) or a job on
    [cron-job.org](https://cron-job.org) that requests

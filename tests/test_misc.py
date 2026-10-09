@@ -29,7 +29,8 @@ def test_keys_are_redacted_from_the_log_file(config: Config) -> None:
 
 def test_prompt_library_versions_and_render() -> None:
     lib = PromptLibrary(ROOT / "prompts")
-    assert set(lib.versions) == {"planner", "coder_agent", "coder_tests"}
+    assert set(lib.versions) == {"planner", "coder_agent", "coder_tests", "coder_streamlit",
+                                 "coder_fastapi", "coder_telegram"}
     rendered = lib.render("coder_agent", spec="{}", feedback="")
     assert "father-agent-task: code file=agent.py" in rendered
     for rule in ("async def", "logging", "try/except", "docstring"):

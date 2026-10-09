@@ -1,4 +1,4 @@
-"""Command-line interface: ``new``, ``list``, ``show``, ``providers``, ``doctor``.
+"""Command-line interface: ``new``, ``list``, ``show``, ``deploy``, ``providers``, ``doctor``.
 
 ``main.py`` at the repository root is a thin wrapper around :func:`main`.
 Exit codes: 0 success, 1 the factory failed, 2 bad usage or configuration.
@@ -12,18 +12,27 @@ import importlib.metadata
 import json
 import logging
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 from . import __version__
 from .config import FREE_HOSTS, KNOWN_PROVIDERS, PROJECT_ROOT, Config, mask
+from .delivery import (
+    TARGET_FOLDERS,
+    deploy_sources,
+    expected_files,
+    render_target,
+    target_commands,
+)
 from .errors import ConfigError, FatherAgentError
-from .factory import BUNDLE_FILES, Factory, load_spec
+from .factory import BUNDLE_FILES, LEGACY_FILES, Factory, load_spec
 from .logging_setup import LOG_FILE_NAME, setup_logging
 from .prompts import PromptLibrary
 from .providers.chain import build_chain
-from .spec import SubAgentSpec
-from .validator import Validator, find_ruff
+from .spec import DEPLOY_TARGETS, FRAMEWORKS, INTERFACES, SubAgentSpec
+from .validator import Validator, find_ruff, gate_summary
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +76,13 @@ def build_parser() -> argparse.ArgumentParser:
                      help="force one provider (default: auto — keyed providers, else mock)")
     new.add_argument("--from-spec", type=Path, metavar="SPEC",
                      help="rebuild from an existing spec.json instead of planning")
+    new.add_argument("-i", "--interface", choices=INTERFACES,
+                     help="override the interface read from the command (default: inferred; "
+                          "cli when nothing signals one)")
+    new.add_argument("--framework", choices=sorted({f for fs in FRAMEWORKS.values() for f in fs}
+                                                   - {"argparse"}),
+                     help="override the framework: streamlit or fastapi (web), aiogram "
+                          "(telegram), fastapi (api)")
     new.add_argument("-f", "--force", action="store_true", help="replace an existing folder")
     new.add_argument("--dry-run", action="store_true", help="plan only; print the spec")
     new.add_argument("-q", "--quiet", action="store_true", help="no progress lines")
@@ -78,6 +94,19 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("slug", help="sub-agent folder name, or a path to it")
     show.add_argument("-o", "--out", type=Path, help="parent folder (default: subagents/)")
     show.add_argument("--json", action="store_true", help="print spec.json as-is")
+
+    deploy = sub.add_parser("deploy", help="prepare a hosting target and print its commands",
+                            description="Refresh a sub-agent's deploy folder from its files, "
+                                        "re-run the gate, and print the exact commands. It "
+                                        "never pushes and never holds a token; for docker it "
+                                        "runs `docker build` when Docker is installed.")
+    deploy.add_argument("slug", help="sub-agent folder name, or a path to it")
+    deploy.add_argument("-t", "--target", required=True,
+                        choices=sorted({t for ts in DEPLOY_TARGETS.values() for t in ts}),
+                        help="hosting target to prepare")
+    deploy.add_argument("-o", "--out", type=Path, help="parent folder (default: subagents/)")
+    deploy.add_argument("--no-build", action="store_true",
+                        help="docker: print the commands without running docker build")
 
     prov = sub.add_parser("providers", help="show the provider chain and key status")
     prov.add_argument("--check", action="store_true",
@@ -107,7 +136,8 @@ async def _cmd_new(args: argparse.Namespace, config: Config) -> int:
     factory = Factory(config, chain)
     try:
         result = await factory.generate(command, output_dir=args.out, force=args.force,
-                                        dry_run=args.dry_run, spec=spec)
+                                        dry_run=args.dry_run, spec=spec,
+                                        interface=args.interface, framework=args.framework)
     finally:
         await factory.aclose()
     if result.dry_run:
@@ -132,22 +162,51 @@ def _cmd_list(args: argparse.Namespace, config: Config) -> int:
     if not dirs:
         out(f"no sub-agents in {root} yet. Try:\n  {EXAMPLE}")
         return 0
-    out(f"{'slug':<28}{'domain':<13}{'libraries':<40}planned by")
+    out(f"{'slug':<28}{'domain':<13}{'interface':<20}{'libraries':<40}planned by")
     for path in dirs:
         try:
             spec = load_spec(path)
         except FatherAgentError as exc:
-            out(f"{path.name:<28}{'?':<13}{'(unreadable spec: ' + str(exc)[:30] + ')':<40}")
+            out(f"{path.name:<28}{'?':<13}{'?':<20}"
+                f"{'(unreadable spec: ' + str(exc)[:30] + ')':<40}")
             continue
         libs = ", ".join(d.package for d in spec.dependencies) or "stdlib"
-        out(f"{spec.slug:<28}{spec.domain:<13}{libs[:38]:<40}{spec.planned_by or '?'}")
+        out(f"{spec.slug:<28}{spec.domain:<13}{spec.delivery.label:<20}{libs[:38]:<40}"
+            f"{spec.planned_by or '?'}")
     return 0
+
+
+#: Folders never read back from a sub-agent (history, caches, secrets).
+_SKIP_PARTS = {"__pycache__", ".pytest_cache", ".ruff_cache", ".venv", "venv", ".git"}
+
+
+def read_bundle(folder: Path) -> dict[str, str]:
+    """Every text file of a written sub-agent, ``relative/posix/path -> text``.
+
+    ``.env`` (your secrets), ``*_data/`` history and caches are skipped.
+    """
+    files: dict[str, str] = {}
+    for path in sorted(folder.rglob("*")):
+        rel = path.relative_to(folder)
+        if not path.is_file() or path.name == ".env" or path.suffix in (".pyc", ".png") \
+                or any(p in _SKIP_PARTS or p.endswith("_data") for p in rel.parts[:-1]):
+            continue
+        try:
+            files[rel.as_posix()] = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+    return files
+
+
+def _resolve_folder(slug: str, out_dir: Path | None, config: Config) -> Path:
+    """A sub-agent folder from a slug or a path."""
+    candidate = Path(slug)
+    return candidate if candidate.is_dir() else (out_dir or config.output_dir) / slug
 
 
 def _cmd_show(args: argparse.Namespace, config: Config) -> int:
     """Print a sub-agent's spec and re-run the (static) validator on its files."""
-    candidate = Path(args.slug)
-    folder = candidate if candidate.is_dir() else (args.out or config.output_dir) / args.slug
+    folder = _resolve_folder(args.slug, args.out, config)
     spec = load_spec(folder)
     if args.json:
         out(spec.to_json().rstrip())
@@ -156,6 +215,9 @@ def _cmd_show(args: argparse.Namespace, config: Config) -> int:
     out(f"  {spec.summary}")
     out(f"  command      {spec.command}")
     out(f"  domain       {spec.domain}")
+    out(f"  interface    {spec.delivery.label}"
+        + ("" if spec.has_delivery_block else "  (spec predates the delivery layer)"))
+    out(f"  deploy       {', '.join(spec.delivery.deploy)}")
     out(f"  libraries    {', '.join(d.package for d in spec.dependencies) or 'stdlib only'}")
     out(f"  env vars     {', '.join(e.name for e in spec.env_vars) or 'none'}")
     out(f"  classes      {', '.join(c.name for c in spec.classes)}")
@@ -163,20 +225,81 @@ def _cmd_show(args: argparse.Namespace, config: Config) -> int:
         out(f"  schedule     every {spec.schedule_seconds}s")
     out(f"  planned by   {spec.planned_by or '?'}")
     out(f"  run          {spec.run_example}")
-    sources = {}
-    for name in BUNDLE_FILES:
+    legacy = not spec.has_delivery_block
+    expected = list(LEGACY_FILES) if legacy else expected_files(spec, BUNDLE_FILES)
+    files = read_bundle(folder)
+    missing = []
+    for name in expected:
         path = folder / name
         present = path.is_file()
-        size = f"{path.stat().st_size} bytes" if present else "MISSING"
-        out(f"  {name:<13}{size}")
-        if present and name.endswith(".py"):
-            sources[name] = path.read_text(encoding="utf-8")
-    reports = asyncio.run(Validator().validate_bundle(sources, spec)) if sources else []
+        if not present:
+            missing.append(name)
+        out(f"  {name:<34}{f'{path.stat().st_size} bytes' if present else 'MISSING'}")
+    if legacy:
+        files = {n: t for n, t in files.items() if n in LEGACY_FILES and n.endswith(".py")}
+    reports = asyncio.run(Validator().validate_bundle(files, spec)) if files else []
     for report in reports:
         out(f"  check {report.filename:<15}{report.summary}")
         for problem in report.problems:
             out(f"      - {problem}")
-    return 0 if all(r.ok for r in reports) else 1
+    if reports:
+        out(f"  gate         {gate_summary(reports)}")
+    return 0 if all(r.ok for r in reports) and not missing else 1
+
+
+def _cmd_deploy(args: argparse.Namespace, config: Config) -> int:
+    """Refresh one hosting target's folder, re-run the gate and print its commands."""
+    folder = _resolve_folder(args.slug, args.out, config)
+    spec = load_spec(folder)
+    if not spec.has_delivery_block:
+        err(f"{folder} predates the delivery layer; rebuild it first:\n  python main.py new "
+            f"--from-spec {folder / 'spec.json'} --force")
+        return 2
+    if args.target not in spec.delivery.deploy:
+        err(f"{spec.slug} ({spec.delivery.label}) is prepared for "
+            f"{', '.join(spec.delivery.deploy)}, not {args.target}")
+        return 2
+    files = read_bundle(folder)
+    missing = [n for n in deploy_sources(spec) if n not in files]
+    if missing:
+        err(f"{folder} is missing {', '.join(missing)}")
+        return 1
+    for target in spec.delivery.deploy:
+        if target not in TARGET_FOLDERS:
+            continue
+        refreshed = render_target(spec, target, files)
+        for rel, text in refreshed.items():
+            # Copies always follow the root files, in every target folder so the
+            # gate's copy check holds; a manifest you edited is kept.
+            if rel.rsplit("/", 1)[-1] in deploy_sources(spec) or rel not in files:
+                path = folder / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files[rel] = text
+        if target == args.target:
+            out(f"prepared {folder / TARGET_FOLDERS[target]}/ "
+                f"({', '.join(sorted(Path(r).name for r in refreshed))})")
+    reports = asyncio.run(Validator().validate_bundle(files, spec))
+    out(f"gate: {gate_summary(reports)} · nothing was executed")
+    failed = [p for r in reports for p in r.problems]
+    if failed:
+        err("the bundle failed the gate; fix it before deploying:\n  - " + "\n  - ".join(failed))
+        return 1
+    commands = target_commands(spec, args.target, str(folder))
+    if args.target == "docker" and not args.no_build and shutil.which("docker"):
+        image = spec.slug.replace("_", "-")
+        out(f"running: docker build -t {image} {folder}")
+        code = subprocess.run(["docker", "build", "-t", image, str(folder)], check=False).returncode
+        if code != 0:
+            err(f"docker build exited {code}")
+            return 1
+        commands = commands[2:]
+    elif args.target == "docker" and not args.no_build:
+        out("docker is not installed here, so nothing was built; run these where it is:")
+    out(f"next ({args.target}):")
+    for line in commands:
+        out(f"  {line}")
+    return 0
 
 
 def _chain_rows(config: Config) -> list[tuple[str, str, str, str]]:
@@ -261,7 +384,10 @@ async def _cmd_doctor(args: argparse.Namespace, config: Config | None,
     ruff = find_ruff()
     row("ruff", f"{ruff[0]} {_version('ruff')}" if ruff else
         "not installed: lint step will be skipped (pip install ruff)", True if ruff else None)
-    required = ("httpx", "pydantic", "python-dotenv")
+    docker = shutil.which("docker")
+    row("docker", docker or "not installed: `deploy --target docker` prints the commands "
+                            "instead of building", True if docker else None)
+    required = ("httpx", "pydantic", "python-dotenv", "pyyaml")
     versions = {d: _version(d) for d in (*required, "smolagents")}
     row("packages", " · ".join(f"{d} {v}" for d, v in versions.items()),
         all(versions[d] != "missing" for d in required))
@@ -321,6 +447,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_list(args, config)
         if args.command == "show":
             return _cmd_show(args, config)
+        if args.command == "deploy":
+            return _cmd_deploy(args, config)
         if args.command == "providers":
             return asyncio.run(_cmd_providers(args, config))
         if args.command == "doctor":

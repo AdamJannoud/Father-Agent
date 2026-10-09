@@ -26,6 +26,11 @@ COMMANDS = [
     "train a classifier on a churn csv dataset and chart the score",
     "organize my downloads folder",
     "track the bitcoin price API every 5 minutes",
+    # one per delivery interface: their app.py / bot.py tests skip without the framework
+    "a Telegram bot that watches a Solana wallet and DMs me on changes",
+    "a dashboard that tracks Solana priority fees and plots the last hour",
+    "a FastAPI dashboard of the bitcoin price API",
+    "a service that exposes the bitcoin price over an HTTP API",
 ]
 
 

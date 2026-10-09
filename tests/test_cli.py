@@ -49,7 +49,7 @@ def test_new_list_show_round_trip(tmp_path: Path, capsys: pytest.CaptureFixture[
     out = tmp_path / "agents"
     assert main(["new", "-o", str(out), SAMPLE_COMMAND]) == 0
     text = capsys.readouterr().out
-    assert "father validate 4/5" in text and "nothing was executed" in text
+    assert "father validate 4/6" in text and "nothing was executed" in text
     assert (out / "wallet_watcher" / "agent.py").is_file()
 
     assert main(["list", "-o", str(out)]) == 0

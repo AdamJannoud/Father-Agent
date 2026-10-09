@@ -22,3 +22,6 @@ dist/
 # Bolter workspace
 .bolter/
 .bolter-task.md
+
+# Local tool state (gh device id and the like)
+.local/

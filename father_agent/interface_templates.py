@@ -339,9 +339,14 @@ code { font-family: var(--app-mono); font-size: .95em; }
 PAGE_JS = """
 (function () {
   var root = document.documentElement, saved = null, q = null;
-  try { q = new URLSearchParams(location.search).get('mode'); saved = localStorage.getItem('app-mode'); } catch (e) {}
+  try {
+    q = new URLSearchParams(location.search).get('mode');
+    saved = localStorage.getItem('app-mode');
+  } catch (e) {}
   var mode = q === 'light' || q === 'dark' ? q : saved;
-  if (mode !== 'light' && mode !== 'dark') mode = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  if (mode !== 'light' && mode !== 'dark') {
+    mode = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
   root.setAttribute('data-app-mode', mode);
   window.toggleMode = function () {
     var next = root.getAttribute('data-app-mode') === 'dark' ? 'light' : 'dark';

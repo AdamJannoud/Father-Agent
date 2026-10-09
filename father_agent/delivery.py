@@ -22,6 +22,8 @@ import re
 from collections.abc import Iterable
 from string import Template
 
+from pydantic import ValidationError
+
 from .errors import FatherAgentError
 from .spec import (
     DEPLOY_TARGETS,
@@ -91,8 +93,9 @@ def choose_delivery(current: Delivery, *, interface: str | None = None,
         return Delivery(interface=interface,
                         framework=framework or (current.framework if same else ""),
                         deploy=current.deploy if same else [])
-    except ValueError as exc:
-        raise FatherAgentError(str(exc).splitlines()[-1].strip()) from exc
+    except ValidationError as exc:
+        reason = exc.errors()[0]["msg"].removeprefix("Value error, ")
+        raise FatherAgentError(reason) from exc
 
 
 #: Packages each framework needs, with why. They join the spec's dependencies.
@@ -704,3 +707,52 @@ def kit_summary(files: Iterable[str]) -> str:
 def describe_targets(spec: SubAgentSpec) -> str:
     """``docker, hf-spaces, render`` for display."""
     return ", ".join(spec.delivery.deploy) or ", ".join(DEPLOY_TARGETS["cli"])
+
+
+def target_files(spec: SubAgentSpec, target: str) -> list[str]:
+    """Paths a hosting target's folder must hold."""
+    folder = TARGET_FOLDERS.get(target)
+    if not folder:
+        return []
+    own = ["README.md", "Dockerfile"] if target == "hf-spaces" else ["render.yaml"]
+    return [f"{folder}/{name}" for name in (*deploy_sources(spec), *own)]
+
+
+def expected_files(spec: SubAgentSpec, common: Iterable[str]) -> list[str]:
+    """Every path a bundle for ``spec`` should hold, ``common`` files first."""
+    files = list(common)
+    iface = interface_file(spec)
+    if iface:
+        files.append(iface)
+    if spec.delivery.interface == "telegram":
+        files.append("scripts/setup_bot.py")
+    for target in spec.delivery.deploy:
+        files += target_files(spec, target)
+    return files
+
+
+def target_commands(spec: SubAgentSpec, target: str, folder: str) -> list[str]:
+    """The exact commands that take a prepared target live (printed, never run for you)."""
+    image = spec.slug.replace("_", "-")
+    port = local_port(spec)
+    publish = f" -p {port}:{port}" if port and spec.delivery.interface != "telegram" else ""
+    if target == "docker":
+        return [f"cd {folder}",
+                f"docker build -t {image} .",
+                f"docker run --rm --env-file .env{publish} {image}"]
+    sub = f"{folder}/{TARGET_FOLDERS[target]}"
+    push = [f"cd {sub}", "git init -b main && git add . && git commit -m \"Deploy "
+                         f"{spec.slug}\""]
+    if target == "hf-spaces":
+        return ["# 1. create an empty Space (SDK: Docker) at https://huggingface.co/new-space",
+                *push,
+                f"git remote add space https://huggingface.co/spaces/<your-user>/{image}",
+                "git push space main",
+                "# 2. add the variables from .env.example under Settings → Variables and "
+                "secrets"]
+    return ["# 1. create an empty GitHub repository for this folder",
+            *push,
+            "git remote add origin https://github.com/<your-user>/" + image + ".git",
+            "git push -u origin main",
+            "# 2. New → Blueprint on https://dashboard.render.com, pick the repository,",
+            "#    and fill in the values Render asks for (the ones marked sync: false)"]

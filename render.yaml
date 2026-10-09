@@ -6,11 +6,15 @@
 #
 # Why a web service and not a worker: Render has no free background worker, and
 # a free web service spins down after 15 minutes without INBOUND traffic. A
-# polling bot only makes outbound calls, so point a free pinger (UptimeRobot,
-# cron-job.org) at https://<service>.onrender.com/healthz every 10 minutes.
-# /healthz answers 200 only while the poll loop is alive, so the pinger doubles
-# as an alert. One always-on service fits the 750 free hours a month; the disk
-# is wiped on every restart, which is why each bundle is delivered as a ZIP.
+# polling bot only makes outbound calls, so the repository ships the pinger:
+# .github/workflows/keepalive.yml requests healthz every 5 minutes from GitHub's
+# own scheduler (free and unlimited on a public repository, no third-party
+# account; set the repository variable KEEPALIVE_URL to point it at another
+# host). /healthz answers 200 only while the poll loop is alive, so a failing
+# ping is also an alert. A free external monitor (UptimeRobot, cron-job.org) can
+# watch the same URL for email alerts and a status page.
+# One always-on service fits the 750 free hours a month; the disk is wiped on
+# every restart, which is why each bundle is delivered as a ZIP.
 #
 # The genuinely 24/7 upgrade (no sleep, no pinger, $7/month) is
 # deploy/render-worker.yaml. Secrets are entered in the dashboard (sync: false),

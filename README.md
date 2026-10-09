@@ -371,13 +371,24 @@ koyeb.com/docs/reference/instances, read 2026-10-09.
    factory falls through to the next provider. A provider with no key is
    skipped, so the form does not ask for `GROQ_API_KEY` or `HF_TOKEN`: adding
    either free key in the dashboard later is the only step to get a fallback.
-3. Add the pinger. Create a free HTTP monitor on
-   [UptimeRobot](https://uptimerobot.com) or a job on
-   [cron-job.org](https://cron-job.org) that requests
-   `https://<your-service>.onrender.com/healthz` **every 10 minutes**. Without
-   it, Render spins the service down after 15 minutes and the bot stops
-   answering until the next inbound request. Because `/healthz` is `503` when
-   polling has stopped, the monitor's alert also tells you when the bot is down.
+3. Keep it awake. Render spins the service down after 15 minutes without inbound
+   traffic, so the repository ships the pinger itself:
+   [`.github/workflows/keepalive.yml`](.github/workflows/keepalive.yml) requests
+   `https://father-agent.onrender.com/healthz` **every 5 minutes** from GitHub's
+   scheduler. It needs nothing switched on and no account: a public repository's
+   scheduled workflows are free, and this one proves itself on every change to
+   it. Because `/healthz` is `503` while polling has stopped, a failing ping is
+   also an alert: the run goes red and opens an issue on the repository, which
+   closes by itself on the first healthy ping. Two limits worth knowing: GitHub's
+   scheduler is best-effort, so a run can be delayed (every 5 minutes against a
+   15-minute idle window leaves three slots per window), and GitHub disables a
+   scheduled workflow after 60 days without repository activity. To point the
+   pinger at another host, set the repository variable `KEEPALIVE_URL`
+   (**Settings → Secrets and variables → Actions → Variables**). If you also want
+   email alerts and a status page, add a free monitor on
+   [UptimeRobot](https://uptimerobot.com) or [cron-job.org](https://cron-job.org)
+   for the same URL every 10 minutes and leave the repository one on as the
+   second line of defence.
 4. Message the bot. Every bundle comes back as a ZIP because the free disk is
    wiped on every restart or spin-down: the copy in your chat is the one that
    lasts.

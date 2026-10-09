@@ -1,0 +1,87 @@
+# Keep the free Render web service awake (Recipe A in render.yaml).
+#
+# A free instance spins down after 15 minutes without INBOUND traffic, and a
+# Telegram bot in long-polling mode only makes outbound calls, so nothing inside
+# the service keeps it up. This workflow is the pinger.
+#
+# /healthz answers 200 only while the poll loop is alive, so a failing ping is
+# also an alert: it opens an issue on this repository, and closes it again on the
+# first healthy ping.
+#
+# Why in the repository rather than an external monitor: a public repository's
+# scheduled workflows are free and unlimited, need no third-party account or
+# credential, and sit next to the deploy config they keep alive. GitHub's
+# scheduler is best-effort (a run can be delayed, or dropped under load), which
+# is why this fires every 5 minutes against a 15-minute idle timeout: three
+# slots in every window. A free monitor such as UptimeRobot can watch the same
+# URL as well, if you want email alerts and a status page.
+name: keepalive
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  # Prove the wiring on every change to it, rather than waiting for the clock.
+  push:
+    paths:
+      - .github/workflows/keepalive.yml
+      - scripts/keepalive.py
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Request /healthz
+        id: ping
+        continue-on-error: true
+        run: python3 scripts/keepalive.py
+        env:
+          # Set the repository variable KEEPALIVE_URL (Settings -> Secrets and
+          # variables -> Actions -> Variables) to point the pinger at another
+          # host, such as a Koyeb service.
+          KEEPALIVE_URL: ${{ vars.KEEPALIVE_URL || 'https://father-agent.onrender.com/healthz' }}
+
+      - name: Open or close the alert issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEALTHY: ${{ steps.ping.outcome == 'success' }}
+          URL: ${{ vars.KEEPALIVE_URL || 'https://father-agent.onrender.com/healthz' }}
+        run: |
+          set -euo pipefail
+          existing=$(gh issue list --state open --search "keepalive in:title" \
+            --json number --jq '.[0].number // ""')
+          if [ "$HEALTHY" = "true" ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --comment "Recovered: $URL answers 200 again."
+            else
+              echo "healthy, no open issue"
+            fi
+          elif [ -n "$existing" ]; then
+            echo "still failing; issue #$existing is already open"
+          else
+            gh issue create --title "keepalive: the Father-Agent bot is not answering /healthz" \
+              --body "$(printf '%s\n' \
+                "The keepalive ping to \`$URL\` did not answer 200 within the retry window." \
+                "" \
+                "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+                "- Render dashboard: is the service live, and do the logs show polling?" \
+                "- If the host had merely slept, the next ping wakes it in about a minute." \
+                "" \
+                "This issue closes by itself on the first healthy ping.")"
+          fi
+
+      - name: Fail the run while the bot is down
+        if: steps.ping.outcome != 'success'
+        run: |
+          echo "::error::/healthz did not answer 200 after the retries"
+          exit 1

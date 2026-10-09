@@ -60,6 +60,28 @@ class _ProgressFormatter(logging.Formatter):
         return record.getMessage()
 
 
+class _LiveStreamHandler(logging.StreamHandler):
+    """A StreamHandler that always writes to the *current* sys.stdout/stderr.
+
+    Holding a reference to the stream at setup time breaks when the stream is
+    later replaced (pytest capture, IDE consoles, redirected output).
+    """
+
+    def __init__(self, name: str) -> None:
+        """``name`` is ``"stdout"`` or ``"stderr"``."""
+        self._stream_name = name
+        super().__init__()
+
+    @property
+    def stream(self):  # type: ignore[override]
+        """The current stream for this handler."""
+        return getattr(sys, self._stream_name)
+
+    @stream.setter
+    def stream(self, _value: object) -> None:
+        """Ignore assignment; the stream is always looked up live."""
+
+
 def _mark(handler: logging.Handler) -> logging.Handler:
     """Tag a handler so a later setup_logging call can replace it."""
     setattr(handler, _MANAGED, True)
@@ -110,7 +132,7 @@ def setup_logging(config: Config, *, verbose: bool = False, quiet: bool = False)
         log_path = None
         sys.stderr.write(f"father: could not open log file in {config.log_dir}: {exc}\n")
 
-    console = logging.StreamHandler(sys.stderr)
+    console = _LiveStreamHandler("stderr")
     console.setLevel(logging.DEBUG if verbose else logging.WARNING)
     console.setFormatter(logging.Formatter("father %(levelname)s: %(message)s"))
     console.addFilter(redactor)
@@ -118,7 +140,7 @@ def setup_logging(config: Config, *, verbose: bool = False, quiet: bool = False)
     package_logger.addHandler(_mark(console))
 
     if not quiet:
-        progress = logging.StreamHandler(sys.stdout)
+        progress = _LiveStreamHandler("stdout")
         progress.setLevel(logging.INFO)
         progress.setFormatter(_ProgressFormatter())
         progress.addFilter(redactor)

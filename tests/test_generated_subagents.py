@@ -43,5 +43,7 @@ def test_generated_suite_passes(command: str, config: Config, tmp_path: Path) ->
     proc = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"],
                           cwd=result.target_dir, capture_output=True, text=True, timeout=120,
                           env=env)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "passed" in proc.stdout or "skipped" in proc.stdout
+    # 5 = nothing collected: the suite skipped itself because a library is missing
+    skipped = proc.returncode == 5 and "skipped" in proc.stdout
+    assert proc.returncode == 0 or skipped, proc.stdout + proc.stderr
+    assert "passed" in proc.stdout or skipped

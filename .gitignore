@@ -25,3 +25,6 @@ dist/
 
 # Local tool state (gh device id and the like)
 .local/
+
+# Self-evolution ledger (a local record of every proposal and decision)
+father_agent/evolution/ledger.jsonl

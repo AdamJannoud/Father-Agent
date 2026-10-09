@@ -1,4 +1,5 @@
-"""Command-line interface: ``new``, ``list``, ``show``, ``deploy``, ``providers``, ``doctor``.
+"""Command-line interface: ``new``, ``list``, ``show``, ``deploy``, ``capabilities``,
+``evolve``, ``providers``, ``doctor``.
 
 ``main.py`` at the repository root is a thin wrapper around :func:`main`.
 Exit codes: 0 success, 1 the factory failed, 2 bad usage or configuration.
@@ -27,6 +28,14 @@ from .delivery import (
     target_commands,
 )
 from .errors import ConfigError, FatherAgentError
+from .evolution import (
+    EvolutionError,
+    EvolutionPaths,
+    capability_lines,
+    evolve,
+    ledger_lines,
+    planned_spec,
+)
 from .factory import BUNDLE_FILES, LEGACY_FILES, Factory, load_spec
 from .logging_setup import LOG_FILE_NAME, setup_logging
 from .prompts import PromptLibrary
@@ -108,6 +117,24 @@ def build_parser() -> argparse.ArgumentParser:
     deploy.add_argument("--no-build", action="store_true",
                         help="docker: print the commands without running docker build")
 
+    sub.add_parser("capabilities", help="list the capability packs installed and proposable",
+                   description="List the capability packs the factory ships, the ones the "
+                               "local catalogue could propose, and the ones the licence "
+                               "allowlist rejects. Offline.")
+
+    evo = sub.add_parser("evolve", help="detect a missing capability and propose an upgrade",
+                         description="Check a task against the capability registry before "
+                                     "generating anything. On a gap, print an additive "
+                                     "upgrade from the local catalogue and ask [y/N]. It "
+                                     "never writes a core file, never applies without an "
+                                     "interactive yes, and declines when there is no "
+                                     "terminal or CI=true. Offline: no network, no model.")
+    evo.add_argument("text", nargs="*", help="the task to check (quote it)")
+    evo.add_argument("--yes", action="store_true",
+                     help="approve without a prompt (scripted use); still declined when "
+                          "CI=true")
+    evo.add_argument("--log", action="store_true", help="print the evolution ledger and exit")
+
     prov = sub.add_parser("providers", help="show the provider chain and key status")
     prov.add_argument("--check", action="store_true",
                       help="contact each keyed provider (GET /models, no tokens spent)")
@@ -145,7 +172,41 @@ async def _cmd_new(args: argparse.Namespace, config: Config) -> int:
         out(f"(dry run: nothing written; would write {result.target_dir})")
     else:
         logger.info("done in %.1fs", result.elapsed)
+    # A capability the factory lacks gets the same proposal and gate as `evolve`.
+    try:
+        await evolve(result.spec.command or command, spec=result.spec,
+                     paths=evolution_paths(), report_covered=False)
+    except EvolutionError as exc:
+        err(f"capability check skipped: {exc}")
     return 0
+
+
+def evolution_paths() -> EvolutionPaths:
+    """Evolution files of this checkout (``FATHER_EVOLUTION_ROOT`` overrides, for tests)."""
+    root = os.environ.get("FATHER_EVOLUTION_ROOT")
+    return EvolutionPaths(Path(root)) if root else EvolutionPaths()
+
+
+def _cmd_capabilities(args: argparse.Namespace, config: Config) -> int:
+    """List installed, proposable and rejected capability packs."""
+    for line in capability_lines(evolution_paths()):
+        out(line)
+    return 0
+
+
+async def _cmd_evolve(args: argparse.Namespace, config: Config) -> int:
+    """Detect a capability gap for a task and propose an upgrade; never generates."""
+    paths = evolution_paths()
+    if args.log:
+        for line in ledger_lines(paths):
+            out(line)
+        return 0
+    task = " ".join(args.text).strip()
+    if not task:
+        err('describe the task to check, e.g.\n  python main.py evolve "watch a kafka topic '
+            'and alert on spikes"')
+        return 2
+    return await evolve(task, spec=planned_spec(task), paths=paths, assume_yes=args.yes)
 
 
 def _subagent_dirs(root: Path) -> list[Path]:
@@ -449,6 +510,10 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_show(args, config)
         if args.command == "deploy":
             return _cmd_deploy(args, config)
+        if args.command == "capabilities":
+            return _cmd_capabilities(args, config)
+        if args.command == "evolve":
+            return asyncio.run(_cmd_evolve(args, config))
         if args.command == "providers":
             return asyncio.run(_cmd_providers(args, config))
         if args.command == "doctor":

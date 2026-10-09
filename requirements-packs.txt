@@ -1,0 +1,3 @@
+# Optional dependencies of capability packs added by `python main.py evolve`.
+# The evolution module appends here after you approve an upgrade; it never
+# touches requirements.txt. Install with: pip install -r requirements-packs.txt

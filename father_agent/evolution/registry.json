@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "packs": [
+    {
+      "name": "http",
+      "summary": "async HTTP and JSON APIs",
+      "provides": [
+        "httpx"
+      ],
+      "licence": "BSD-3-Clause",
+      "source": "builtin",
+      "keywords": [
+        "http",
+        "api",
+        "rest",
+        "json",
+        "webhook",
+        "endpoint",
+        "rpc"
+      ]
+    },
+    {
+      "name": "schedule",
+      "summary": "polling on an interval",
+      "provides": [
+        "stdlib"
+      ],
+      "licence": "PSF-2.0",
+      "source": "builtin",
+      "keywords": [
+        "every",
+        "hourly",
+        "daily",
+        "schedule",
+        "interval",
+        "poll"
+      ]
+    },
+    {
+      "name": "charts",
+      "summary": "PNG charts from the history",
+      "provides": [
+        "matplotlib",
+        "pandas"
+      ],
+      "licence": "PSF-2.0 / BSD-3-Clause",
+      "source": "builtin",
+      "keywords": [
+        "plot",
+        "chart",
+        "visualise",
+        "visualize"
+      ]
+    },
+    {
+      "name": "telegram",
+      "summary": "aiogram 3 Telegram bot",
+      "provides": [
+        "aiogram",
+        "aiohttp",
+        "python-dotenv"
+      ],
+      "licence": "MIT",
+      "source": "builtin",
+      "keywords": [
+        "telegram",
+        "bot",
+        "dm me"
+      ]
+    },
+    {
+      "name": "database",
+      "summary": "local history store",
+      "provides": [
+        "stdlib"
+      ],
+      "licence": "PSF-2.0",
+      "source": "builtin",
+      "keywords": [
+        "sqlite",
+        "store",
+        "history",
+        "database",
+        "log"
+      ]
+    },
+    {
+      "name": "api",
+      "summary": "FastAPI JSON service",
+      "provides": [
+        "fastapi",
+        "uvicorn",
+        "python-dotenv"
+      ],
+      "licence": "MIT",
+      "source": "builtin",
+      "keywords": [
+        "service",
+        "expose",
+        "http api",
+        "fastapi"
+      ]
+    },
+    {
+      "name": "web",
+      "summary": "Streamlit dashboard",
+      "provides": [
+        "streamlit",
+        "python-dotenv"
+      ],
+      "licence": "Apache-2.0",
+      "source": "builtin",
+      "keywords": [
+        "dashboard",
+        "web app",
+        "streamlit"
+      ]
+    },
+    {
+      "name": "scraping",
+      "summary": "HTML scraping with CSS selectors",
+      "provides": [
+        "beautifulsoup4"
+      ],
+      "licence": "MIT",
+      "source": "builtin",
+      "keywords": [
+        "scrape",
+        "crawl",
+        "html",
+        "website"
+      ]
+    },
+    {
+      "name": "ml",
+      "summary": "tabular data and classic ML",
+      "provides": [
+        "scikit-learn",
+        "pandas"
+      ],
+      "licence": "BSD-3-Clause",
+      "source": "builtin",
+      "keywords": [
+        "csv",
+        "dataset",
+        "train",
+        "predict",
+        "forecast"
+      ]
+    }
+  ]
+}

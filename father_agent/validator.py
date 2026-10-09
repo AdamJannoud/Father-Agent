@@ -30,6 +30,14 @@ which read text and never import or run anything either:
                   files that exist; each deploy folder's copies match the root.
 9. ``secrets``  — no literal token, API key, private key or long hex string
                   anywhere in the bundle, and .env.example holds no values.
+
+A capability pack proposed by the self-evolution module gets checks 1-3 on
+its templates and one more on its dependencies:
+
+10. ``licence`` — every dependency carries a licence on the open-source
+                  allowlist (:data:`LICENCE_ALLOWLIST`), is not a paid API SDK,
+                  and the pack needs no account or token. A model that ignores
+                  an instruction cannot get past this: it is code, not a prompt.
 """
 
 from __future__ import annotations
@@ -69,7 +77,13 @@ _BANNED_CALLS = {"eval", "exec", "__import__", "compile"}
 _BANNED_ATTR_CALLS = {("os", "system"), ("os", "popen"), ("pickle", "loads")}
 #: Order of the checks in the one-line gate summary.
 CHECK_ORDER = ("ast", "compile", "ruff", "imports", "consistency", "policy",
-               "bundle", "deploy", "secrets")
+               "bundle", "deploy", "secrets", "licence")
+#: Open-source licences (SPDX ids) a capability-pack dependency may carry.
+LICENCE_ALLOWLIST = frozenset({
+    "MIT", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0", "ISC", "PSF-2.0", "MPL-2.0",
+    "LGPL-2.1", "LGPL-2.1-only", "LGPL-2.1-or-later", "LGPL-3.0", "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
+})
 #: Name of the report that holds the bundle-level checks.
 BUNDLE_REPORT = "bundle"
 _SECRET_PATTERNS = (
@@ -161,6 +175,30 @@ class FileReport:
     def summary(self) -> str:
         """``ast ok · compile ok · ruff ok · imports ok ...``."""
         return " · ".join(c.label for c in self.checks)
+
+
+def licence_allowed(licence: str) -> bool:
+    """True when ``licence`` (an SPDX id, any case) is on :data:`LICENCE_ALLOWLIST`."""
+    wanted = licence.strip().lower()
+    return any(wanted == allowed.lower() for allowed in LICENCE_ALLOWLIST)
+
+
+def check_licences(dependencies: list[tuple[str, str]], *,
+                   needs_account: bool = False) -> CheckResult:
+    """Check 10: ``(package, licence)`` pairs against the allowlist and the paid SDKs."""
+    problems: list[str] = []
+    for package, licence in dependencies:
+        if import_name_for(package) in PAID_SDKS or package.lower() in PAID_SDKS:
+            problems.append(f"{package} is a paid API SDK")
+        if not licence.strip():
+            problems.append(f"{package} declares no licence")
+        elif not licence_allowed(licence):
+            problems.append(f"{package} is licensed {licence}, which is not on the "
+                            f"open-source allowlist")
+    if needs_account:
+        problems.append("the pack needs an account or a token; only free, keyless "
+                        "components may be proposed")
+    return CheckResult("licence", not problems, "\n".join(problems))
 
 
 def find_ruff() -> list[str] | None:
@@ -256,6 +294,26 @@ class Validator:
         report.checks.append(self._check_secrets(files))
         logger.info("validated the bundle: %s", report.summary)
         return report
+
+    async def validate_pack(self, files: dict[str, str], dependencies: list[tuple[str, str]],
+                            *, needs_account: bool = False) -> list[FileReport]:
+        """Checks 1-3 on each Python file of a capability pack, then check 10.
+
+        The last report, named ``licence``, holds the licence check.
+        """
+        reports: list[FileReport] = []
+        for name, source in files.items():
+            if not name.endswith(".py"):
+                continue
+            report = FileReport(name, "support")
+            if self._check_ast(name, source, report) is not None:
+                report.checks.append(await asyncio.to_thread(self._check_compile, name, source))
+                report.checks.append(await self._check_ruff(name, source))
+            reports.append(report)
+        licence = FileReport("licence", "pack")
+        licence.checks.append(check_licences(dependencies, needs_account=needs_account))
+        reports.append(licence)
+        return reports
 
     # --------------------------------------------------------------- checks
 

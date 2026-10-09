@@ -1,5 +1,7 @@
 # The Father Agent
 
+[![ci](https://github.com/AdamJannoud/Father-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/AdamJannoud/Father-Agent/actions/workflows/ci.yml)
+
 **An open-source agent factory.** You type one line of English; it plans, writes
 and validates a professional async Python sub-agent into `subagents/<slug>/`,
 and delivers it as whatever the sentence asked for: a command-line agent, a
@@ -209,6 +211,10 @@ hold one that writes good code), but any llama.cpp / OpenAI-compatible server on
 | `python main.py list` | list generated sub-agents |
 | `python main.py show <slug>` | show a sub-agent's spec and re-run the gate on its files |
 | `python main.py deploy <slug> --target docker\|hf-spaces\|render` | refresh that target's folder, re-run the gate, print the exact commands (`docker build` runs when Docker is installed; `--no-build` skips it) |
+| `python main.py capabilities` | list the capability packs installed, proposable from the local catalogue, and rejected by the licence allowlist |
+| `python main.py evolve "<task>"` | detect a missing capability and propose an additive upgrade, without generating anything; asks `[y/N]` |
+| `  --yes` | approve without a prompt (scripted use); still declined when `CI=true` |
+| `  --log` | print the evolution ledger |
 | `python main.py providers [--check]` | show the provider chain and key status |
 | `python main.py doctor [--online]` | check Python, config, providers, prompts, ruff, paths |
 
@@ -283,6 +289,59 @@ agent = CodeAgent(tools=[make_factory_tool()], model=InferenceClientModel())
 agent.run("Build me a sub-agent that scrapes Hacker News headlines hourly.")
 ```
 
+## Self-evolution
+
+The factory checks every task against a registry of capability packs
+(`father_agent/evolution/registry.json`) **before** it generates anything. When
+a task needs something no pack provides, it proposes an additive upgrade from a
+curated, local catalogue and waits for you:
+
+```text
+$ python main.py evolve "watch a kafka topic and alert on spikes"
+capability check … gap found
+  need : message-queue client (kafka)  (task mentions "kafka")
+  have : http · schedule · charts · telegram · database · api · web · scraping · ml
+proposed upgrade — nothing written yet
+  add    capability pack "kafka"
+         templates/consumer.py + pack.json
+  why    the task needs a Kafka consumer; no installed pack covers message queues
+         (task mentions "kafka")
+  deps   kafka-python >=2.0,<3 · Apache-2.0 · open-source, no account, no key
+  writes father_agent/evolution/packs/kafka/** · registry entry · requirements-packs.txt · ledger
+  never  core modules or requirements.txt — manifest 68 files, sha256 pinned
+  gate   ast ok · compile ok · ruff ok · licence ok (checked in memory)
+  diff   sha256:cf1584e53711084b63da7fc36d20bb4a98d9c2b1c0e9e56edb345a50cb41d5c3
+apply this upgrade? [y/N] n
+  declined — nothing written (answered no).
+core manifest intact (68 files, hashes unchanged)
+ledger ← {"decision": "declined", "pack": "kafka", "ts": "…", "task": "watch a kafka topic and alert on spikes"}
+```
+
+`python main.py new` runs the same check after it generates, and asks the same
+question when it finds a gap. The guard rails are code, not promises:
+
+- **Never touches the core.** `father_agent/evolution/core_manifest.json` pins
+  every core file by sha256. The applier refuses any path in it (and anything
+  outside `packs/<name>/`, the registry and `requirements-packs.txt`), refuses
+  to run if the core already drifted, and re-checks every hash after applying.
+  `tests/test_evolution.py` proves a core-file write is refused.
+- **Never applies without you.** The default is No. With no terminal (a pipe,
+  cron, CI) it declines and says how to re-run it; `--yes` exists for scripts
+  but is still declined when `CI=true`. There is no "remember my answer".
+- **Only free, open-source components.** Each catalogue dependency carries a
+  licence, and the validator's `licence` check rejects anything not on the
+  allowlist (MIT, BSD-2/3-Clause, Apache-2.0, ISC, PSF-2.0, MPL-2.0, LGPL), any
+  paid API SDK, and anything that needs an account or a token.
+- **Offline.** Planning reads local JSON and the offline planner; it makes no
+  network call and uses no hosted or paid model.
+- **On the record.** Every proposal and decision is a line in
+  `father_agent/evolution/ledger.jsonl` (task, pack, dependencies, decision,
+  diff hash); `python main.py evolve --log` prints it.
+
+Pack dependencies go to `requirements-packs.txt`, never `requirements.txt`.
+Changed a core file on purpose? Re-pin it with
+`python -m father_agent.evolution --write` (the test suite fails until you do).
+
 ## Project layout
 
 ```text
@@ -303,10 +362,13 @@ father_agent/
   heuristics.py, templates.py   the offline mock's planning rules and code templates
   interface_templates.py    the offline mock's app.py (Streamlit, FastAPI) and bot.py (aiogram)
   integrations/             smolagents Tool
+  evolution/                self-evolution: registry.json, catalogue.json, templates/,
+                            detector, consent gate, applier, core_manifest.json, ledger
 prompts/                    planner.md, coder_agent.md, coder_tests.md,
                             coder_streamlit.md, coder_fastapi.md, coder_telegram.md
 tests/                      offline test suite (sockets blocked)
-scripts/verify.sh           install + lint + test + end-to-end check
+scripts/verify.sh           install + lint + test + end-to-end check (CI runs it as is)
+.github/workflows/ci.yml    CI: ruff, and verify.sh on Python 3.11 and 3.12; no secrets
 ```
 
 ## Extending it
@@ -328,7 +390,12 @@ scripts/verify.sh           install + lint + test + end-to-end check
 pip install -r requirements-dev.txt
 python -m pytest -q
 ruff check .
+bash scripts/verify.sh      # what CI runs, key-free and offline after the install
 ```
+
+CI (`.github/workflows/ci.yml`) runs on every push and pull request: a `lint`
+job (ruff alone) and a `tests` job that runs `scripts/verify.sh` on Python 3.11
+and 3.12. It needs no secrets, so it runs the same on a fork.
 
 ## Licence
 

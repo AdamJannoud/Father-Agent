@@ -1,0 +1,56 @@
+# The repository's definition of green, on every push and pull request.
+#
+# `tests` runs scripts/verify.sh unchanged (venv, ruff, pytest, the offline
+# mock end-to-end generations, the self-evolution smoke check), so CI and a
+# local run can never drift. `lint` runs ruff alone so a lint failure reads
+# differently from a test failure. No secrets, no keys, no network beyond
+# pip install: it runs the same on a fork.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install ruff (the version pinned in requirements.txt)
+        run: python -m pip install --disable-pip-version-check "$(grep -E '^ruff==' requirements.txt | cut -d' ' -f1)"
+      - name: ruff check
+        run: python -m ruff check --output-format=github .
+
+  tests:
+    name: tests ${{ matrix.python }} (verify.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - name: bash scripts/verify.sh
+        env:
+          PYTHON: python
+        run: bash scripts/verify.sh
